@@ -1,50 +1,29 @@
 const mongoose = require("mongoose");
 
-const joinDetailsSchema = new mongoose.Schema({
-  userId: {
-    type: String,
-    required: true,
-  },
-  joinTime: {
-    type: Date,
-    default: Date.now,
-    required: true,
-  },
-  leftTime: {
-    type: Date,
-  },
-});
-
 const inviteLinkSchema = new mongoose.Schema({
-  chatLink: {
+  inviteLink: { type: String, required: true },
+  memberId: { type: String, default: null },
+  durationMonths: { type: Number, required: true },
+  createdAt: { type: Date, default: Date.now },
+  expirationDate: { type: Date },
+  status: {
     type: String,
-    required: true,
-  },
-  joinDetails: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "JoinDetails",
-    required: true,
-  },
-  chat: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: "Chat",
-    required: true,
+    enum: ["active", "used", "removed"],
+    default: "active",
   },
 });
 
-const chatSchema = new mongoose.Schema({
-  chatId: {
-    type: Number,
-    required: true,
-    unique: true,
+const chatSchema = new mongoose.Schema(
+  {
+    chatId: { type: String, required: true, unique: true },
+    channelName: { type: String },
+    inviteLinks: [inviteLinkSchema],
   },
-  channelName: {
-    type: String,
-  },
-});
+  { timestamps: true }
+);
 
-const InviteLink = mongoose.model("InviteLink", inviteLinkSchema);
+chatSchema.index({ chatId: 1, "inviteLinks.inviteLink": 1 });
+
 const Chat = mongoose.model("Chat", chatSchema);
-const JoinDetails = mongoose.model("JoinDetails", joinDetailsSchema);
 
-module.exports = { InviteLink, Chat, JoinDetails };
+module.exports = { Chat };

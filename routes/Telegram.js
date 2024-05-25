@@ -1,19 +1,54 @@
-const express = require('express');
-const fetch = require('node-fetch');
+const express = require("express");
+const fetch = require("node-fetch");
+const { Chat } = require("../models/UserSchema");
 const router = express.Router();
 require("dotenv").config();
 
 const token = process.env.BOT_TOKEN;
 
-router.post('/createInviteLink', async (req, res) => {
-  const { chatId } = req.query;
+router.post("/createInviteLink", async (req, res) => {
+  const { chatId, durationMonths } = req.query;
 
   try {
-    const memberLimit = "1";
     const response = await fetch(
-      `https://api.telegram.org/bot${token}/createChatInviteLink?chat_id=${chatId}&member_limit=${memberLimit}`
+      `https://api.telegram.org/bot${token}/createChatInviteLink?chat_id=${chatId}&member_limit=1`
+    );
+
+    if (!response.ok) {
+      throw new Error(data.description);
+    }
+    const data = await response.json();
+    const inviteLink = data.result.invite_link;
+    const newChat = await Chat.findOneAndUpdate(
+      { chatId },
+      {
+        $push: {
+          inviteLinks: {
+            inviteLink,
+            durationMonths,
+            expirationDate: new Date(Date.now() + durationMonths * 30 * 24 * 60 * 60 * 1000),
+          },
+        },
+      },
+      { new: true, upsert: true }
+    );
+    res.json({ inviteLink: newChat.inviteLinks.slice(-1)[0] });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+router.post("/revokeInviteLink", async (req, res) => {
+  const { chatId, inviteChatLink } = req.query;
+
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteChatLink}`
     );
     const data = await response.json();
+    if (!data.ok) {
+      throw new Error("Link not revoked");
+    }
     const inviteLink = data.result.invite_link;
     res.json({ inviteLink });
   } catch (error) {
@@ -21,23 +56,7 @@ router.post('/createInviteLink', async (req, res) => {
   }
 });
 
-router.post('/revokeInviteLink', async (req, res) => {
-  const { chatId, inviteLink } = req.query;
-
-  try {
-    const memberLimit = "1";
-    const response = await fetch(
-      `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`
-    );
-    const data = await response.json();
-    const inviteLink = data.result.invite_link;
-    res.json({ inviteLink });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
-router.post('/removeMember', async (req, res) => {
+router.post("/removeMember", async (req, res) => {
   const { chatId, userId } = req.body;
 
   try {
