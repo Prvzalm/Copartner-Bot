@@ -46,8 +46,8 @@ async function checkAndHandleExpiredInviteLinks() {
   }
 }
 
-cron.schedule("0 * * * *", () => {
-  console.log("Hourly check for expired invite links...");
+cron.schedule("0 0 * * *", () => {
+  console.log("Daily check for expired invite links at midnight...");
   checkAndHandleExpiredInviteLinks();
 });
 
