@@ -13,19 +13,18 @@ const SALT_INDEX = 1;
 const SALT_KEY = process.env.SALT_KEY;
 const APP_BE_URL = process.env.APP_BE_URL;
 
-router.post("/createInviteLink", async (req, res) => {
-  const { chatId, durationMonths } = req.query;
-
+const createInviteLink = async (chatId, durationMonths) => {
   try {
     const response = await fetch(
       `https://api.telegram.org/bot${token}/createChatInviteLink?chat_id=${chatId}&member_limit=1`
     );
 
+    const data = await response.json();
     if (!response.ok) {
       throw new Error(data.description);
     }
-    const data = await response.json();
     const inviteLink = data.result.invite_link;
+
     const newChat = await Chat.findOneAndUpdate(
       { chatId },
       {
@@ -41,15 +40,16 @@ router.post("/createInviteLink", async (req, res) => {
       },
       { new: true, upsert: true }
     );
-    res.json({ inviteLink: newChat.inviteLinks.slice(-1)[0] });
+    return { inviteLink: newChat.inviteLinks.slice(-1)[0].inviteLink }; // Assuming you need the invite link string
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error(`Failed to create invite link: ${error.message}`);
+    throw error;
   }
-});
+};
 
 router.post("/pay", async (req, res) => {
   try {
-    const { returnUrl, plan } = req.body;
+    const { returnUrl, plan, chatId } = req.body;
     const merchantTransactionId = req.body.transactionId;
     const data = {
       merchantId: MERCHANT_ID,
@@ -58,7 +58,7 @@ router.post("/pay", async (req, res) => {
       amount: req.body.amount * 100,
       redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${merchantTransactionId}&returnUrl=${encodeURIComponent(
         returnUrl
-      )}&planType=${plan}`,
+      )}&planType=${plan}&chatId=${chatId}`,
       redirectMode: "POST",
       merchantUserId: req.body.MID,
       paymentInstrument: {
@@ -92,16 +92,12 @@ router.post("/pay", async (req, res) => {
 
 router.post("/payment/callback", async (req, res) => {
   try {
-    const merchantTransactionId = req.query.id;
-    const { returnUrl, planType } = req.query;
+    const { id: merchantTransactionId, returnUrl, planType, chatId } = req.query;
     if (!merchantTransactionId) {
-      throw new Error(
-        `Cannot find Merchant Transaction ID ${merchantTransactionId}`
-      );
+      throw new Error(`Cannot find Merchant Transaction ID`);
     }
     const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}`;
-    const string =
-      `/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}` + SALT_KEY;
+    const string = `/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}` + SALT_KEY;
     const sha256_val = sha256(string);
     const xVerifyChecksum = sha256_val + "###" + SALT_INDEX;
 
@@ -116,30 +112,25 @@ router.post("/payment/callback", async (req, res) => {
       },
     };
 
-    axios
-      .request(options)
-      .then(function (response) {
-        if (response.data.success) {
-          return res.redirect(
-            `${decodeURIComponent(
-              returnUrl
-            )}?status=success&transactionId=${merchantTransactionId}&planType=${planType}`
-          );
-        }
-        return res.redirect(
-          `${decodeURIComponent(
-            returnUrl
-          )}?status=failure&transactionId=${merchantTransactionId}`
-        );
-      })
-      .catch(function (error) {
-        console.error(error);
-      });
+    const response = await axios.request(options);
+    if (response.data.success) {
+      try {
+        const result = await createInviteLink(chatId, planType);
+        console.log(result.inviteLink, chatId);
+        return res.redirect(`${decodeURIComponent(returnUrl)}?status=success&transactionId=${merchantTransactionId}&inviteLink=${result.inviteLink}`);
+      } catch (error) {
+        console.error('Error while creating invite link:', error);
+        return res.status(500).json({ error: error.message });
+      }
+    } else {
+      return res.redirect(`${decodeURIComponent(returnUrl)}?status=failure&transactionId=${merchantTransactionId}`);
+    }
   } catch (error) {
-    console.log(error);
+    console.error('Error in callback:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
 
 // router.post("/revokeInviteLink", async (req, res) => {
 //   const { chatId, inviteChatLink } = req.query;
