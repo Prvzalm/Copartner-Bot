@@ -49,22 +49,21 @@ const createInviteLink = async (chatId, durationMonths) => {
 
 router.post("/pay", async (req, res) => {
   try {
-    const { returnUrl, plan, chatId } = req.body;
-    const merchantTransactionId = req.body.transactionId;
+    const { returnUrl, plan, chatId, subscriptionId, userId, totalAmount, transactionId } = req.body;
     const data = {
       merchantId: MERCHANT_ID,
-      merchantTransactionId: merchantTransactionId,
-      name: req.body.name,
-      amount: req.body.amount * 100,
-      redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${merchantTransactionId}&returnUrl=${encodeURIComponent(
+      merchantTransactionId: transactionId,
+      amount: totalAmount * 100,
+      redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${transactionId}&returnUrl=${encodeURIComponent(
         returnUrl
-      )}&planType=${plan}&chatId=${chatId}`,
+      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}`,
       redirectMode: "POST",
-      merchantUserId: req.body.MID,
+      merchantUserId: userId,
       paymentInstrument: {
         type: "PAY_PAGE",
       },
     };
+    console.log(data);
     const bufferObj = Buffer.from(JSON.stringify(data), "utf8");
     const base64EncodedPayload = bufferObj.toString("base64");
     const string = base64EncodedPayload + "/pg/v1/pay" + SALT_KEY;
@@ -84,6 +83,7 @@ router.post("/pay", async (req, res) => {
         },
       }
     );
+    console.log(response.data);
     res.json(response.data);
   } catch (error) {
     res.status(500).send(error.message);
@@ -92,12 +92,13 @@ router.post("/pay", async (req, res) => {
 
 router.post("/payment/callback", async (req, res) => {
   try {
-    const { id: merchantTransactionId, returnUrl, planType, chatId } = req.query;
-    if (!merchantTransactionId) {
+    const { id: transactionId, returnUrl, planType, chatId, subscriptionId, userId, totalAmount } = req.query;
+    console.log("req.query", transactionId, subscriptionId, userId, totalAmount);
+    if (!transactionId) {
       throw new Error(`Cannot find Merchant Transaction ID`);
     }
-    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}`;
-    const string = `/pg/v1/status/${MERCHANT_ID}/${merchantTransactionId}` + SALT_KEY;
+    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
+    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}` + SALT_KEY;
     const sha256_val = sha256(string);
     const xVerifyChecksum = sha256_val + "###" + SALT_INDEX;
 
@@ -115,21 +116,54 @@ router.post("/payment/callback", async (req, res) => {
     const response = await axios.request(options);
     if (response.data.success) {
       try {
+        const paymentMode = response.data.data.paymentInstrument.type;
+        const subscriber = await postSubscriberData(transactionId, subscriptionId, userId, totalAmount, paymentMode);
         const result = await createInviteLink(chatId, planType);
         console.log(result.inviteLink, chatId);
-        return res.redirect(`${decodeURIComponent(returnUrl)}?status=success&transactionId=${merchantTransactionId}&inviteLink=${result.inviteLink}`);
+        return res.redirect(`${decodeURIComponent(returnUrl)}?status=success&transactionId=${transactionId}&inviteLink=${result.inviteLink}`);
       } catch (error) {
         console.error('Error while creating invite link:', error);
         return res.status(500).json({ error: error.message });
       }
     } else {
-      return res.redirect(`${decodeURIComponent(returnUrl)}?status=failure&transactionId=${merchantTransactionId}`);
+      return res.redirect(`${decodeURIComponent(returnUrl)}?status=failure&transactionId=${transactionId}`);
     }
   } catch (error) {
     console.error('Error in callback:', error);
     res.status(500).json({ error: error.message });
   }
 });
+
+const postSubscriberData = async (transactionId, subscriptionId, userId, totalAmount, paymentMode) => {
+  const gstAmount = (totalAmount * 0.18).toFixed(2);
+
+  const data = {
+    subscriptionId,
+    userId,
+    gstAmount,
+    totalAmount,
+    paymentMode,
+    transactionId,
+    isActive: true,
+  };
+
+  try {
+    const response = await axios.post('https://copartners.in:5009/api/Subscriber', data, {
+      headers: {
+        'Content-Type': 'application/json',
+      },
+    });
+
+    if (response.status === 200) {
+      console.log('Data posted successfully:', response.data);
+      return response.data;
+    } else {
+      console.error('Failed to post data:', response.status, response.statusText);
+    }
+  } catch (error) {
+    console.error('Error posting data:', error.message);
+  }
+};
 
 
 // router.post("/revokeInviteLink", async (req, res) => {
