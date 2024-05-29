@@ -144,28 +144,25 @@ async function revokeInviteLinkAndBanMember(
 }
 
 bot.on("channel_post", async (ctx) => {
-  const chatId = ctx.chat.id;
-  const channelName = ctx.chat.title;
+  const { id: chatId, title: chatName } = ctx.chat;
 
   try {
-    const existingChat = await ChatName.findOne({ chatId: chatId });
+    const result = await ChatName.findOneAndUpdate(
+      { chatId },
+      { chatName },
+      { new: true, upsert: true, setDefaultsOnInsert: true }
+    );
 
-    if (existingChat) {
-      if (existingChat.channelName !== channelName) {
-        existingChat.channelName = channelName;
-        await existingChat.save();
-        console.log("Chat updated with new channel name:", channelName);
+    if (result) {
+      if (result.isNew) {
+        console.log(
+          "New chat added with ID and channel name:",
+          chatId,
+          chatName
+        );
       } else {
-        console.log("No update needed, channel name unchanged.");
+        console.log("Chat updated with new channel name:", chatName);
       }
-    } else {
-      const newChat = new ChatName({ chatId, channelName });
-      await newChat.save();
-      console.log(
-        "New chat added with ID and channel name:",
-        chatId,
-        channelName
-      );
     }
   } catch (error) {
     console.error("Error handling channel post:", error);
