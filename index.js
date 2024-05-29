@@ -159,7 +159,6 @@ bot.on("channel_post", async (ctx) => {
         console.log("No update needed, channel name unchanged.");
       }
     } else {
-      // If no existing chat is found, consider adding a new document
       const newChat = new ChatName({ chatId, channelName });
       await newChat.save();
       console.log(

@@ -3,6 +3,7 @@ const fetch = require("node-fetch");
 const { Chat } = require("../models/UserSchema");
 const axios = require("axios");
 const sha256 = require("sha256");
+const { ChatName } = require("../models/ChatNameSchema");
 const router = express.Router();
 require("dotenv").config();
 
@@ -133,6 +134,16 @@ router.post("/payment/callback", async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+router.get("/getChatNames", async (req, res) => {
+  try {
+    const chatNames = await ChatName.find();
+    res.json(chatNames);
+} catch (error) {
+    console.error("Failed to fetch chat names:", error);
+    res.status(500).json({ message: "Failed to retrieve chat names" });
+}
+})
 
 const postSubscriberData = async (transactionId, subscriptionId, userId, totalAmount, paymentMode) => {
   const gstAmount = (totalAmount * 0.18).toFixed(2);
