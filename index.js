@@ -4,6 +4,7 @@ const express = require("express");
 const { Chat } = require("./models/UserSchema");
 const cors = require("cors");
 const cron = require("node-cron");
+const { ChatName } = require("./models/ChatNameSchema");
 require("dotenv").config();
 
 const app = express();
@@ -147,15 +148,28 @@ bot.on("channel_post", async (ctx) => {
   const channelName = ctx.chat.title;
 
   try {
-    const existingChat = await Chat.findOne({ chatId: chatId });
+    const existingChat = await ChatName.findOne({ chatId: chatId });
 
-    if (existingChat && existingChat.channelName !== channelName) {
-      existingChat.channelName = channelName;
-      await existingChat.save();
-      console.log("Chat updated with new channel name:", channelName);
+    if (existingChat) {
+      if (existingChat.channelName !== channelName) {
+        existingChat.channelName = channelName;
+        await existingChat.save();
+        console.log("Chat updated with new channel name:", channelName);
+      } else {
+        console.log("No update needed, channel name unchanged.");
+      }
+    } else {
+      // If no existing chat is found, consider adding a new document
+      const newChat = new ChatName({ chatId, channelName });
+      await newChat.save();
+      console.log(
+        "New chat added with ID and channel name:",
+        chatId,
+        channelName
+      );
     }
   } catch (error) {
-    console.error("Error saving chat ID:", error);
+    console.error("Error handling channel post:", error);
   }
 });
 
