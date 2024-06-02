@@ -13,6 +13,9 @@ const PHONE_PE_HOST_URL = process.env.PHONE_PE_HOST_URL;
 const SALT_INDEX = 1;
 const SALT_KEY = process.env.SALT_KEY;
 const APP_BE_URL = process.env.APP_BE_URL;
+const key = process.env.FAST2SMS_API_KEY;
+const senderId = process.env.SENDER_ID;
+const messageId = process.env.MESSAGE_ID;
 
 const createInviteLink = async (chatId, durationMonths) => {
   try {
@@ -48,16 +51,43 @@ const createInviteLink = async (chatId, durationMonths) => {
   }
 };
 
+const sendSMS = async (mobileNumber, inviteLink) => {
+  try {
+    const response = await fetch(
+      `https://www.fast2sms.com/dev/bulkV2?authorization=${key}&route=dlt&sender_id=${senderId}&message=${messageId}&variables_values=${inviteLink}%7C&flash=0&numbers=${mobileNumber}`
+    );
+    if (response.ok) {
+      console.log(
+        `SMS sent to mobile ${mobileNumber} with invite link ${inviteLink}`
+      );
+    } else {
+      console.log(response.error);
+    }
+  } catch (error) {
+    throw new Error(`Failed to send SMS: ${error.message}`);
+  }
+};
+
 router.post("/pay", async (req, res) => {
   try {
-    const { returnUrl, plan, chatId, subscriptionId, userId, totalAmount, transactionId } = req.body;
+    const {
+      returnUrl,
+      plan,
+      chatId,
+      subscriptionId,
+      userId,
+      totalAmount,
+      transactionId,
+      mobileNumber,
+      transactionDate,
+    } = req.body;
     const data = {
       merchantId: MERCHANT_ID,
       merchantTransactionId: transactionId,
       amount: totalAmount * 100,
       redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${transactionId}&returnUrl=${encodeURIComponent(
         returnUrl
-      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}`,
+      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}&mobileNumber=${mobileNumber}&transactionDate=${transactionDate}`,
       redirectMode: "POST",
       merchantUserId: userId,
       paymentInstrument: {
@@ -93,8 +123,24 @@ router.post("/pay", async (req, res) => {
 
 router.post("/payment/callback", async (req, res) => {
   try {
-    const { id: transactionId, returnUrl, planType, chatId, subscriptionId, userId, totalAmount } = req.query;
-    console.log("req.query", transactionId, subscriptionId, userId, totalAmount);
+    const {
+      id: transactionId,
+      returnUrl,
+      planType,
+      chatId,
+      subscriptionId,
+      userId,
+      totalAmount,
+      mobileNumber,
+      transactionDate,
+    } = req.query;
+    console.log(
+      "req.query",
+      transactionId,
+      subscriptionId,
+      userId,
+      totalAmount
+    );
     if (!transactionId) {
       throw new Error(`Cannot find Merchant Transaction ID`);
     }
@@ -118,19 +164,38 @@ router.post("/payment/callback", async (req, res) => {
     if (response.data.success) {
       try {
         const paymentMode = response.data.data.paymentInstrument.type;
-        const subscriber = await postSubscriberData(transactionId, subscriptionId, userId, totalAmount, paymentMode);
         const result = await createInviteLink(chatId, planType);
+        const subscriber = await postSubscriberData(
+          transactionId,
+          subscriptionId,
+          userId,
+          totalAmount,
+          paymentMode,
+          transactionDate,
+          result.inviteLink
+        );
+        // const sendSMSOn = await sendSMS(mobileNumber, result.inviteLink);
         console.log(result.inviteLink, chatId);
-        return res.redirect(`${decodeURIComponent(returnUrl)}?status=success&transactionId=${transactionId}&inviteLink=${result.inviteLink}`);
+        return res.redirect(
+          `${decodeURIComponent(
+            returnUrl
+          )}?status=success&transactionId=${transactionId}&inviteLink=${
+            result.inviteLink
+          }`
+        );
       } catch (error) {
-        console.error('Error while creating invite link:', error);
+        console.error("Error while creating invite link:", error);
         return res.status(500).json({ error: error.message });
       }
     } else {
-      return res.redirect(`${decodeURIComponent(returnUrl)}?status=failure&transactionId=${transactionId}`);
+      return res.redirect(
+        `${decodeURIComponent(
+          returnUrl
+        )}?status=failure&transactionId=${transactionId}`
+      );
     }
   } catch (error) {
-    console.error('Error in callback:', error);
+    console.error("Error in callback:", error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -139,13 +204,21 @@ router.get("/getChatNames", async (req, res) => {
   try {
     const chatNames = await ChatName.find();
     res.json(chatNames);
-} catch (error) {
+  } catch (error) {
     console.error("Failed to fetch chat names:", error);
     res.status(500).json({ message: "Failed to retrieve chat names" });
-}
-})
+  }
+});
 
-const postSubscriberData = async (transactionId, subscriptionId, userId, totalAmount, paymentMode) => {
+const postSubscriberData = async (
+  transactionId,
+  subscriptionId,
+  userId,
+  totalAmount,
+  paymentMode,
+  transactionDate,
+  premiumTelegramChannel
+) => {
   const gstAmount = (totalAmount * 0.18).toFixed(2);
 
   const data = {
@@ -155,27 +228,36 @@ const postSubscriberData = async (transactionId, subscriptionId, userId, totalAm
     totalAmount,
     paymentMode,
     transactionId,
+    transactionDate,
     isActive: true,
+    premiumTelegramChannel,
   };
 
   try {
-    const response = await axios.post('https://copartners.in:5009/api/Subscriber', data, {
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
+    const response = await axios.post(
+      "https://copartners.in:5009/api/Subscriber",
+      data,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
 
     if (response.status === 200) {
-      console.log('Data posted successfully:', response.data);
+      console.log("Data posted successfully:", response.data);
       return response.data;
     } else {
-      console.error('Failed to post data:', response.status, response.statusText);
+      console.error(
+        "Failed to post data:",
+        response.status,
+        response.statusText
+      );
     }
   } catch (error) {
-    console.error('Error posting data:', error.message);
+    console.error("Error posting data:", error.message);
   }
 };
-
 
 // router.post("/revokeInviteLink", async (req, res) => {
 //   const { chatId, inviteChatLink } = req.query;
