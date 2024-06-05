@@ -15,7 +15,6 @@ const SALT_KEY = process.env.SALT_KEY;
 const APP_BE_URL = process.env.APP_BE_URL;
 const key = process.env.FAST2SMS_API_KEY;
 const senderId = process.env.SENDER_ID;
-const messageId = process.env.MESSAGE_ID;
 
 const createInviteLink = async (chatId, durationMonths) => {
   try {
@@ -53,8 +52,14 @@ const createInviteLink = async (chatId, durationMonths) => {
 
 const sendSMS = async (mobileNumber, inviteLink) => {
   try {
+    const inviteCode = inviteLink.split("https://t.me/")[1];
+
+    if (!inviteCode) {
+      throw new Error("Invalid invite link format");
+    }
+
     const response = await fetch(
-      `https://www.fast2sms.com/dev/bulkV2?authorization=${key}&route=dlt&sender_id=${senderId}&message=${messageId}&variables_values=${inviteLink}%7C&flash=0&numbers=${mobileNumber}`
+      `https://www.fast2sms.com/dev/bulkV2?authorization=${key}&route=dlt&sender_id=${senderId}&message=169464&variables_values=${inviteCode}&flash=0&numbers=${mobileNumber}`
     );
     if (response.ok) {
       console.log(
@@ -165,6 +170,9 @@ router.post("/payment/callback", async (req, res) => {
       try {
         const paymentMode = response.data.data.paymentInstrument.type;
         const result = await createInviteLink(chatId, planType);
+        if (!result.inviteLink) {
+          throw new Error("Failed to create invite link");
+        }
         const subscriber = await postSubscriberData(
           transactionId,
           subscriptionId,
@@ -174,7 +182,10 @@ router.post("/payment/callback", async (req, res) => {
           transactionDate,
           result.inviteLink
         );
-        // const sendSMSOn = await sendSMS(mobileNumber, result.inviteLink);
+        if (!subscriber.response.ok) {
+          throw new Error("Failed to POST subscriber API");
+        }
+        const sendSMSOn = await sendSMS(mobileNumber, result.inviteLink);
         console.log(result.inviteLink, chatId);
         return res.redirect(
           `${decodeURIComponent(
