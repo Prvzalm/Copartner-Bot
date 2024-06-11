@@ -50,9 +50,19 @@ const createInviteLink = async (chatId, durationMonths) => {
   }
 };
 
+router.post('/createInviteLink', async (req, res) => {
+  const { chatId, durationMonths } = req.query;
+  try {
+    const result = await createInviteLink(chatId, durationMonths);
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 const sendSMS = async (mobileNumber, inviteLink) => {
   try {
-    const inviteCode = inviteLink.split("https://t.me/")[1];
+    const inviteCode = encodeURIComponent(inviteLink.split("https://t.me/")[1]);
 
     if (!inviteCode) {
       throw new Error("Invalid invite link format");
@@ -63,7 +73,7 @@ const sendSMS = async (mobileNumber, inviteLink) => {
     );
     if (response.ok) {
       console.log(
-        `SMS sent to mobile ${mobileNumber} with invite link ${inviteLink}`
+        `SMS sent to mobile ${mobileNumber} with invite link ${inviteCode}`
       );
     } else {
       console.log(response.error);
@@ -182,10 +192,14 @@ router.post("/payment/callback", async (req, res) => {
           transactionDate,
           result.inviteLink
         );
-        if (!subscriber.response.ok) {
+        if (!subscriber.isSuccess) {
           throw new Error("Failed to POST subscriber API");
         }
-        const sendSMSOn = await sendSMS(mobileNumber, result.inviteLink);
+
+        const isKYC = await userKYC(userId);
+        if (isKYC) {
+          await sendSMS(mobileNumber, result.inviteLink);
+        }
         console.log(result.inviteLink, chatId);
         return res.redirect(
           `${decodeURIComponent(
@@ -220,6 +234,22 @@ router.get("/getChatNames", async (req, res) => {
     res.status(500).json({ message: "Failed to retrieve chat names" });
   }
 });
+
+const userKYC = async (userId) => {
+  try {
+    const response = await fetch(
+      `https://copartners.in:5131/api/User/${userId}`
+    );
+    if (!response.ok) {
+      throw new Error("Failed to fetch user data");
+    }
+    const data = await response.json();
+    return data.data.isKYC;
+  } catch (error) {
+    console.error("Error fetching user KYC data:", error.message);
+    return null;
+  }
+};
 
 const postSubscriberData = async (
   transactionId,
