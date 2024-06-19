@@ -16,7 +16,7 @@ const APP_BE_URL = process.env.APP_BE_URL;
 const key = process.env.FAST2SMS_API_KEY;
 const senderId = process.env.SENDER_ID;
 
-const createInviteLink = async (chatId, durationMonths) => {
+const createInviteLink = async (chatId, durationMonths, isDays) => {
   try {
     const response = await fetch(
       `https://api.telegram.org/bot${token}/createChatInviteLink?chat_id=${chatId}&member_limit=1`
@@ -28,6 +28,13 @@ const createInviteLink = async (chatId, durationMonths) => {
     }
     const inviteLink = data.result.invite_link;
 
+    let expirationDate;
+    if (isDays) {
+      expirationDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000);
+    } else {
+      expirationDate = new Date(Date.now() + duration * 30 * 24 * 60 * 60 * 1000);
+    }
+
     const newChat = await Chat.findOneAndUpdate(
       { chatId },
       {
@@ -35,9 +42,8 @@ const createInviteLink = async (chatId, durationMonths) => {
           inviteLinks: {
             inviteLink,
             durationMonths,
-            expirationDate: new Date(
-              Date.now() + durationMonths * 30 * 24 * 60 * 60 * 1000
-            ),
+            expirationDate,
+            isDays,
           },
         },
       },
@@ -95,6 +101,7 @@ router.post("/pay", async (req, res) => {
       transactionId,
       mobileNumber,
       transactionDate,
+      isCustom
     } = req.body;
     const data = {
       merchantId: MERCHANT_ID,
@@ -102,7 +109,7 @@ router.post("/pay", async (req, res) => {
       amount: totalAmount * 100,
       redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${transactionId}&returnUrl=${encodeURIComponent(
         returnUrl
-      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}&mobileNumber=${mobileNumber}&transactionDate=${transactionDate}`,
+      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}&mobileNumber=${mobileNumber}&transactionDate=${transactionDate}&isCustom=${isCustom}`,
       redirectMode: "POST",
       merchantUserId: userId,
       paymentInstrument: {
@@ -148,6 +155,7 @@ router.post("/payment/callback", async (req, res) => {
       totalAmount,
       mobileNumber,
       transactionDate,
+      isCustom
     } = req.query;
     console.log(
       "req.query",
@@ -179,7 +187,7 @@ router.post("/payment/callback", async (req, res) => {
     if (response.data.success) {
       try {
         const paymentMode = response.data.data.paymentInstrument.type;
-        const result = await createInviteLink(chatId, planType);
+        const result = await createInviteLink(chatId, planType, isCustom);
         if (!result.inviteLink) {
           throw new Error("Failed to create invite link");
         }
@@ -227,7 +235,7 @@ router.post("/payment/callback", async (req, res) => {
 
 router.get("/getChatNames", async (req, res) => {
   try {
-    const chatNames = await ChatName.find();
+    const chatNames = await ChatName.find().select('chatId chatName createdAt').lean();
     res.json(chatNames);
   } catch (error) {
     console.error("Failed to fetch chat names:", error);
