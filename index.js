@@ -5,6 +5,7 @@ const { Chat } = require("./models/UserSchema");
 const cors = require("cors");
 const cron = require("node-cron");
 const { ChatName } = require("./models/ChatNameSchema");
+const ChatMember = require("./models/ChatMemberSchema");
 require("dotenv").config();
 
 const app = express();
@@ -52,7 +53,7 @@ cron.schedule("0 0 * * *", () => {
   checkAndHandleExpiredInviteLinks();
 });
 
-bot.on("chat_member", async (ctx) => {
+bot.on("chat_member", async (ctx, next) => {
   const chatId = ctx.chat.id.toString();
   const memberId = ctx.chatMember.new_chat_member.user.id.toString();
   const inviteLink = ctx.chatMember.invite_link?.invite_link;
@@ -105,6 +106,75 @@ bot.on("chat_member", async (ctx) => {
     console.error("Error handling new chat member:", error);
   }
 });
+
+// bot.on("chat_member", async (ctx) => {
+//   const chatName = ctx.chatMember.chat.title;
+//   const chatId = ctx.chatMember.chat.id;
+//   const memberId = ctx.chatMember.new_chat_member.user.id;
+//   const chatLink = ctx.chatMember.invite_link
+//     ? ctx.chatMember.invite_link.invite_link
+//     : "None";
+//   const status = ctx.chatMember.new_chat_member.status;
+
+//   async function addOrUpdate() {
+//     try {
+//       const updateResult = await ChatMember.findOneAndUpdate(
+//         { channelName: chatName }, // Check if memberId doesn't exist
+//         {
+//           $set: { chatId: chatId },
+//           $inc: { joinedMembersCount: 1 },
+//           $push: {
+//             members: {
+//               memberId,
+//               chatLink: chatLink,
+//               joinedAt: new Date(),
+//             },
+//           },
+//         },
+//         { upsert: true, new: true }
+//       );
+
+//       if (updateResult) {
+//         console.log(
+//           `Member joined/updated! Channel ID: ${chatName}, Member ID: ${memberId}, Chat Link: ${chatLink}`
+//         );
+//       } else {
+//         console.log(`Member unable to be found/updated in ${chatName}.`);
+//       }
+//     } catch (error) {
+//       console.error("Error updating chat member in MongoDB:", error);
+//     }
+//   }
+
+//   async function memberLeft() {
+//     try {
+//       // Update leftAt for the member in MongoDB
+//       const updateResult = await ChatMember.findOneAndUpdate(
+//         { channelName: chatName, "members.memberId": memberId },
+//         {
+//           $inc: { leftMembersCount: 1 },
+//           $set: { "members.$.leftAt": new Date() },
+//         }
+//       );
+
+//       if (updateResult) {
+//         console.log(
+//           `Member left! Channel ID: ${chatName}, Member ID: ${memberId}`
+//         );
+//       } else {
+//         console.log("Member not found or not updated.");
+//       }
+//     } catch (error) {
+//       console.error("Error updating leftAt in MongoDB:", error);
+//     }
+//   }
+
+//   if (status === "member") {
+//     addOrUpdate();
+//   } else if (status === "kicked" || status === "left" || status === "banned") {
+//     memberLeft();
+//   }
+// });
 
 async function revokeInviteLinkAndBanMember(
   chatId,
@@ -173,8 +243,8 @@ app.use(cors());
 app.use(express.json());
 app.use("/api", require("./routes/Telegram"));
 
-bot.launch({
-  allowedUpdates: ["channel_post", "chat_member"],
-});
+// bot.launch({
+//   allowedUpdates: ["channel_post", "chat_member"],
+// });
 
 app.listen(PORT, () => console.log(`Server is running on Port ${PORT}`));

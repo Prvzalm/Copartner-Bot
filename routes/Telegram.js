@@ -16,7 +16,13 @@ const APP_BE_URL = process.env.APP_BE_URL;
 const key = process.env.FAST2SMS_API_KEY;
 const senderId = process.env.SENDER_ID;
 
-const createInviteLink = async (chatId, durationMonths, isDays) => {
+const createInviteLink = async (
+  chatId,
+  durationMonths,
+  isDays,
+  userId,
+  number
+) => {
   try {
     const response = await fetch(
       `https://api.telegram.org/bot${token}/createChatInviteLink?chat_id=${chatId}&member_limit=1`
@@ -29,10 +35,14 @@ const createInviteLink = async (chatId, durationMonths, isDays) => {
     const inviteLink = data.result.invite_link;
 
     let expirationDate;
-    if (isDays) {
-      expirationDate = new Date(Date.now() + duration * 24 * 60 * 60 * 1000);
+    if (!isDays || isDays === "false") {
+      expirationDate = new Date(
+        Date.now() + durationMonths * 30 * 24 * 60 * 60 * 1000
+      );
     } else {
-      expirationDate = new Date(Date.now() + duration * 30 * 24 * 60 * 60 * 1000);
+      expirationDate = new Date(
+        Date.now() + durationMonths * 24 * 60 * 60 * 1000
+      );
     }
 
     const newChat = await Chat.findOneAndUpdate(
@@ -41,6 +51,8 @@ const createInviteLink = async (chatId, durationMonths, isDays) => {
         $push: {
           inviteLinks: {
             inviteLink,
+            userId,
+            number,
             durationMonths,
             expirationDate,
             isDays,
@@ -56,10 +68,73 @@ const createInviteLink = async (chatId, durationMonths, isDays) => {
   }
 };
 
-router.post('/createInviteLink', async (req, res) => {
-  const { chatId, durationMonths } = req.query;
+const sendPostRequest = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "kyc_incomplete",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+  };
+
   try {
-    const result = await createInviteLink(chatId, durationMonths);
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+router.get("/getLink", async (req, res) => {
+  const { inviteLink } = req.body;
+  try {
+    if (!inviteLink) {
+      return res
+        .status(400)
+        .json({ message: "inviteLink query parameter is required" });
+    }
+
+    const documents = await Chat.find(
+      { "inviteLinks.inviteLink": inviteLink },
+      { "inviteLinks.$": 1 }
+    );
+
+    if (documents.length === 0) {
+      return res
+        .status(404)
+        .json({ message: "No document found with the given inviteLink" });
+    }
+
+    const filteredLinks = documents.map((doc) =>
+      doc.inviteLinks.find((link) => link.inviteLink === inviteLink)
+    );
+
+    res.status(200).json(filteredLinks);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: "Internal server error" });
+  }
+});
+
+router.post("/createInviteLink", async (req, res) => {
+  const { chatId, durationMonths, isCustom, userId, mobileNumber } = req.query;
+  try {
+    const result = await createInviteLink(
+      chatId,
+      durationMonths,
+      isCustom,
+      userId,
+      mobileNumber
+    );
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -101,7 +176,7 @@ router.post("/pay", async (req, res) => {
       transactionId,
       mobileNumber,
       transactionDate,
-      isCustom
+      isCustom,
     } = req.body;
     const data = {
       merchantId: MERCHANT_ID,
@@ -155,7 +230,7 @@ router.post("/payment/callback", async (req, res) => {
       totalAmount,
       mobileNumber,
       transactionDate,
-      isCustom
+      isCustom,
     } = req.query;
     console.log(
       "req.query",
@@ -184,10 +259,17 @@ router.post("/payment/callback", async (req, res) => {
     };
 
     const response = await axios.request(options);
-    if (response.data.success) {
+    const paymentStatus = response.data.data.responseCode;
+    if (response.data.success && paymentStatus === "SUCCESS") {
       try {
         const paymentMode = response.data.data.paymentInstrument.type;
-        const result = await createInviteLink(chatId, planType, isCustom);
+        const result = await createInviteLink(
+          chatId,
+          planType,
+          isCustom,
+          userId,
+          mobileNumber
+        );
         if (!result.inviteLink) {
           throw new Error("Failed to create invite link");
         }
@@ -207,20 +289,60 @@ router.post("/payment/callback", async (req, res) => {
         const isKYC = await userKYC(userId);
         if (isKYC) {
           await sendSMS(mobileNumber, result.inviteLink);
+        } else {
+          sendPostRequest(mobileNumber);
         }
         console.log(result.inviteLink, chatId);
+
+        await postPaymentResponse({
+          subscriptionId,
+          userId,
+          transactionId,
+          status: "S",
+          amount: totalAmount,
+          paymentMode,
+          transactionDate,
+          remarks: "Payment successful",
+        });
+
         return res.redirect(
-          `${decodeURIComponent(
-            returnUrl
-          )}?status=success&transactionId=${transactionId}&inviteLink=${
+          `https://copartner.in/kycpage?status=success&transactionId=${transactionId}&inviteLink=${encodeURIComponent(
             result.inviteLink
-          }`
+          )}`
         );
       } catch (error) {
         console.error("Error while creating invite link:", error);
         return res.status(500).json({ error: error.message });
       }
+    } else if (response.data.success && paymentStatus === "PENDING") {
+      await postPaymentResponse({
+        subscriptionId,
+        userId,
+        transactionId,
+        status: "P",
+        amount: totalAmount,
+        paymentMode: "N/A",
+        transactionDate,
+        remarks: "Payment pending",
+      });
+
+      return res.redirect(
+        `${decodeURIComponent(
+          returnUrl
+        )}?status=pending&transactionId=${transactionId}`
+      );
     } else {
+      await postPaymentResponse({
+        subscriptionId,
+        userId,
+        transactionId,
+        status: "R",
+        amount: totalAmount,
+        paymentMode: "N/A",
+        transactionDate,
+        remarks: "Payment failed",
+      });
+
       return res.redirect(
         `${decodeURIComponent(
           returnUrl
@@ -235,13 +357,27 @@ router.post("/payment/callback", async (req, res) => {
 
 router.get("/getChatNames", async (req, res) => {
   try {
-    const chatNames = await ChatName.find().select('chatId chatName createdAt').lean();
+    const chatNames = await ChatName.find()
+      .select("chatId chatName createdAt")
+      .lean();
     res.json(chatNames);
   } catch (error) {
     console.error("Failed to fetch chat names:", error);
     res.status(500).json({ message: "Failed to retrieve chat names" });
   }
 });
+
+async function postPaymentResponse(data) {
+  try {
+    await axios.post("https://copartners.in:5009/api/PaymentResponse", data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  } catch (error) {
+    console.error("Error posting payment response:", error);
+  }
+}
 
 const userKYC = async (userId) => {
   try {
@@ -308,23 +444,23 @@ const postSubscriberData = async (
   }
 };
 
-// router.post("/revokeInviteLink", async (req, res) => {
-//   const { chatId, inviteChatLink } = req.query;
+router.post("/revokeInviteLink", async (req, res) => {
+  const { chatId, inviteChatLink } = req.query;
 
-//   try {
-//     const response = await fetch(
-//       `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteChatLink}`
-//     );
-//     const data = await response.json();
-//     if (!data.ok) {
-//       throw new Error("Link not revoked");
-//     }
-//     const inviteLink = data.result.invite_link;
-//     res.json({ inviteLink });
-//   } catch (error) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
+  try {
+    const response = await fetch(
+      `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteChatLink}`
+    );
+    const data = await response.json();
+    if (!data.ok) {
+      throw new Error("Link not revoked");
+    }
+    const inviteLink = data.result.invite_link;
+    res.json({ inviteLink });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
 // router.post("/removeMember", async (req, res) => {
 //   const { chatId, userId } = req.body;
