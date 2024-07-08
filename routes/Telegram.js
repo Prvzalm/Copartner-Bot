@@ -77,8 +77,8 @@ const sendPostRequest = async (phoneNumber) => {
     destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
     media: {
-      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
-      filename: "sample_media",
+      url: "https://s3.eu-north-1.amazonaws.com/copartners-storage/Images/IMG_0698.jpg",
+      filename: "kycIncomplete",
     },
   };
 
@@ -191,7 +191,7 @@ router.post("/pay", async (req, res) => {
         type: "PAY_PAGE",
       },
     };
-    console.log(data);
+    console.log("/pay block", data);
     const bufferObj = Buffer.from(JSON.stringify(data), "utf8");
     const base64EncodedPayload = bufferObj.toString("base64");
     const string = base64EncodedPayload + "/pg/v1/pay" + SALT_KEY;
@@ -237,7 +237,8 @@ router.post("/payment/callback", async (req, res) => {
       transactionId,
       subscriptionId,
       userId,
-      totalAmount
+      totalAmount,
+      mobileNumber
     );
     if (!transactionId) {
       throw new Error(`Cannot find Merchant Transaction ID`);
@@ -280,7 +281,8 @@ router.post("/payment/callback", async (req, res) => {
           totalAmount,
           paymentMode,
           transactionDate,
-          result.inviteLink
+          result.inviteLink,
+          mobileNumber
         );
         if (!subscriber.isSuccess) {
           throw new Error("Failed to POST subscriber API");
@@ -355,6 +357,56 @@ router.post("/payment/callback", async (req, res) => {
   }
 });
 
+router.post('/checkpayment', async (req, res) => {
+  try {
+    const {
+      transactionId,
+    } = req.query;
+
+    console.log(
+      'req.query',
+      transactionId,
+    );
+
+    if (!transactionId) {
+      throw new Error('Cannot find Merchant Transaction ID');
+    }
+
+    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
+    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}${SALT_KEY}`;
+    const sha256_val = sha256(string).toString();
+    const xVerifyChecksum = `${sha256_val}###${SALT_INDEX}`;
+
+    const options = {
+      method: 'GET',
+      url: statusUrl,
+      headers: {
+        accept: 'application/json',
+        'Content-Type': 'application/json',
+        'X-VERIFY': xVerifyChecksum,
+        'X-MERCHANT-ID': MERCHANT_ID,
+      },
+    };
+
+    const response = await axios.request(options);
+    const data = response.data;
+
+    // Handle the response data according to your business logic
+    // For example, update the payment status in your database
+
+    res.status(200).json({
+      message: 'Payment status retrieved successfully',
+      data,
+    });
+  } catch (error) {
+    console.error('Error in /payment/callback:', error.message);
+    res.status(500).json({
+      message: 'Internal Server Error',
+      error: error.message,
+    });
+  }
+});
+
 router.get("/getChatNames", async (req, res) => {
   try {
     const chatNames = await ChatName.find()
@@ -402,7 +454,8 @@ const postSubscriberData = async (
   totalAmount,
   paymentMode,
   transactionDate,
-  premiumTelegramChannel
+  premiumTelegramChannel,
+  mobileNumber
 ) => {
   const gstAmount = (totalAmount * 0.18).toFixed(2);
 
@@ -416,6 +469,7 @@ const postSubscriberData = async (
     transactionDate,
     isActive: true,
     premiumTelegramChannel,
+    mobileNumber
   };
 
   try {
