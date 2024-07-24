@@ -2,8 +2,10 @@ const express = require("express");
 const fetch = require("node-fetch");
 const { Chat } = require("../models/UserSchema");
 const axios = require("axios");
+const cron = require("node-cron");
 const sha256 = require("sha256");
 const { ChatName } = require("../models/ChatNameSchema");
+const { message } = require("telegraf/filters");
 const router = express.Router();
 require("dotenv").config();
 
@@ -35,13 +37,30 @@ const createInviteLink = async (
     const inviteLink = data.result.invite_link;
 
     let expirationDate;
+    const now = new Date();
+    const dayOfWeek = now.getDay(); // 0 for Sunday, 1 for Monday, ..., 5 for Friday, 6 for Saturday
+    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes
+    const fridayTimeLimit = 15 * 60 + 30; // 3:30 PM in minutes
+    const sundayTimeLimit = 15 * 60 + 30; // 3:30 PM in minutes
+
     if (!isDays || isDays === "false") {
       expirationDate = new Date(
         Date.now() + durationMonths * 30 * 24 * 60 * 60 * 1000
       );
     } else {
+      let additionalDays = 0;
+      if (dayOfWeek === 5 && currentTime > fridayTimeLimit) {
+        additionalDays = 3;
+      } else if (dayOfWeek === 6) {
+        additionalDays = 2;
+      } else if (dayOfWeek === 0 && currentTime < sundayTimeLimit) {
+        additionalDays = 1;
+      }
+
       expirationDate = new Date(
-        Date.now() + durationMonths * 24 * 60 * 60 * 1000
+        Date.now() +
+          (durationMonths * 24 * 60 * 60 * 1000) +
+          additionalDays * 24 * 60 * 60 * 1000
       );
     }
 
@@ -61,6 +80,7 @@ const createInviteLink = async (
       },
       { new: true, upsert: true }
     );
+
     return { inviteLink: newChat.inviteLinks.slice(-1)[0].inviteLink }; // Assuming you need the invite link string
   } catch (error) {
     console.error(`Failed to create invite link: ${error.message}`);
@@ -218,6 +238,51 @@ router.post("/pay", async (req, res) => {
   }
 });
 
+async function checkPayment(req, res) {
+  try {
+    const { transactionId } = req.query;
+
+    console.log("req.query", transactionId);
+
+    if (!transactionId) {
+      throw new Error("Cannot find Merchant Transaction ID");
+    }
+
+    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
+    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}${SALT_KEY}`;
+    const sha256_val = sha256(string).toString();
+    const xVerifyChecksum = `${sha256_val}###${SALT_INDEX}`;
+
+    const options = {
+      method: "GET",
+      url: statusUrl,
+      headers: {
+        accept: "application/json",
+        "Content-Type": "application/json",
+        "X-VERIFY": xVerifyChecksum,
+        "X-MERCHANT-ID": MERCHANT_ID,
+      },
+    };
+
+    const response = await axios.request(options);
+    const data = response.data;
+
+    // Handle the response data according to your business logic
+    // For example, update the payment status in your database
+
+    res.status(200).json({
+      message: "Payment status retrieved successfully",
+      data,
+    });
+  } catch (error) {
+    console.error("Error in /checkpayment:", error.message);
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  }
+}
+
 router.post("/payment/callback", async (req, res) => {
   try {
     const {
@@ -290,6 +355,7 @@ router.post("/payment/callback", async (req, res) => {
 
         const isKYC = await userKYC(userId);
         if (isKYC) {
+          await sendPaidTelegramLinkMessage(mobileNumber, result.inviteLink);
           await sendSMS(mobileNumber, result.inviteLink);
         } else {
           sendPostRequest(mobileNumber);
@@ -310,7 +376,7 @@ router.post("/payment/callback", async (req, res) => {
         return res.redirect(
           `https://copartner.in/kycpage?status=success&transactionId=${transactionId}&inviteLink=${encodeURIComponent(
             result.inviteLink
-          )}`
+          )}&planType=${planType}&amount=${totalAmount}&subscriptionId=${subscriptionId}`
         );
       } catch (error) {
         console.error("Error while creating invite link:", error);
@@ -357,19 +423,14 @@ router.post("/payment/callback", async (req, res) => {
   }
 });
 
-router.post('/checkpayment', async (req, res) => {
+router.post("/checkpayment", async (req, res) => {
   try {
-    const {
-      transactionId,
-    } = req.query;
+    const { transactionId } = req.query;
 
-    console.log(
-      'req.query',
-      transactionId,
-    );
+    console.log("req.query", transactionId);
 
     if (!transactionId) {
-      throw new Error('Cannot find Merchant Transaction ID');
+      throw new Error("Cannot find Merchant Transaction ID");
     }
 
     const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
@@ -378,13 +439,13 @@ router.post('/checkpayment', async (req, res) => {
     const xVerifyChecksum = `${sha256_val}###${SALT_INDEX}`;
 
     const options = {
-      method: 'GET',
+      method: "GET",
       url: statusUrl,
       headers: {
-        accept: 'application/json',
-        'Content-Type': 'application/json',
-        'X-VERIFY': xVerifyChecksum,
-        'X-MERCHANT-ID': MERCHANT_ID,
+        accept: "application/json",
+        "Content-Type": "application/json",
+        "X-VERIFY": xVerifyChecksum,
+        "X-MERCHANT-ID": MERCHANT_ID,
       },
     };
 
@@ -395,13 +456,13 @@ router.post('/checkpayment', async (req, res) => {
     // For example, update the payment status in your database
 
     res.status(200).json({
-      message: 'Payment status retrieved successfully',
+      message: "Payment status retrieved successfully",
       data,
     });
   } catch (error) {
-    console.error('Error in /payment/callback:', error.message);
+    console.error("Error in /payment/callback:", error.message);
     res.status(500).json({
-      message: 'Internal Server Error',
+      message: "Internal Server Error",
       error: error.message,
     });
   }
@@ -469,7 +530,7 @@ const postSubscriberData = async (
     transactionDate,
     isActive: true,
     premiumTelegramChannel,
-    mobileNumber
+    mobileNumber,
   };
 
   try {
@@ -530,5 +591,342 @@ router.post("/revokeInviteLink", async (req, res) => {
 //     res.status(500).json({ error: error.message });
 //   }
 // });
+
+// THESE ARE ALL THE API'S FOR WHATSAPP API
+
+router.get("/sendSignup", async (req, res) => {
+  const { phone, link } = req.query;
+  try {
+    const response = await fetchSubscriptionData();
+    res.status(200).json({ success: true, data: response });
+  } catch (error) {
+    console.log(error.message);
+    res.status(500).json("Some error in the api");
+  }
+});
+
+const sendSignupMessage = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "⁠new_signup_1 (On Sign Up) (TEXT)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {},
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+    return response;
+  } catch (error) {
+    console.error("Error:", error);
+    throw error;
+  }
+};
+
+const sendTwoHourGapMessage = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "new_signup_2hourgap (After 2 Hours) (IMAGE)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+    return response;
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const signedUser2Discount = async (
+  discount,
+  expertName,
+  channelName,
+  experience,
+  followers,
+  raid,
+  phoneNumber
+) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "signed_user_4_discount (Sunday 5PM) (Upto 2) (IMAGE)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [
+      `${discount}`,
+      `${expertName}`,
+      `${channelName}`,
+      `${experience}`,
+      `${followers}`,
+      `https://copartner.in/ra-detail/${raid}`,
+    ],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const fetchSubscriptionData = async () => {
+  const url = "https://copartners.in:5009/api/Subscription";
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    const subscriptions = response.data.data;
+    const filteredSubscriptions = subscriptions
+      .filter((sub) => sub.discountPercentage)
+      .sort(
+        (a, b) => new Date(b.discountValidFrom) - new Date(a.discountValidFrom)
+      );
+    return filteredSubscriptions;
+  } catch (error) {
+    console.error("Error fetching subscription data:", error);
+    return [];
+  }
+};
+
+const fetchUserData = async () => {
+  const url =
+    "https://copartners.in:5134/api/UserData/UserFirstTimePaymentListing?page=1&pageSize=10000";
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response.data.data;
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    return [];
+  }
+};
+
+// Schedule the task to run at two times on Friday
+cron.schedule("0 17 * * 5", async () => {
+  console.log("Running task at 5 PM every Friday");
+  const subscriptions = await fetchSubscriptionData();
+  const users = await fetchUserData();
+
+  if (subscriptions.length > 0 && users.length > 0) {
+    for (const subscription of subscriptions) {
+      for (const user of users) {
+        await signedUser2Discount(
+          subscription.discountPercentage,
+          subscription.experts.name,
+          subscription.experts.channelName,
+          subscription.experts.experience,
+          subscription.experts.telegramFollower,
+          subscription.expertsId,
+          user.mobileNumber
+        );
+      }
+    }
+  } else {
+    console.log("No subscriptions or users found.");
+  }
+});
+
+cron.schedule("0 19 * * 5", async () => {
+  console.log("Running task at 7 PM every Friday");
+  const subscriptions = await fetchSubscriptionData();
+  const users = await fetchUserData();
+
+  if (subscriptions.length > 0 && users.length > 0) {
+    for (const subscription of subscriptions) {
+      for (const user of users) {
+        await signedUser2Discount(
+          subscription.discountPercentage,
+          subscription.experts.name,
+          subscription.experts.channelName,
+          subscription.experts.experience,
+          subscription.experts.telegramFollower,
+          subscription.expertsId,
+          user.mobileNumber
+        );
+      }
+    }
+  } else {
+    console.log("No subscriptions or users found.");
+  }
+});
+
+const sendPaidTelegramLinkMessage = async (phoneNumber, link) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "⁠⁠paid_telegram_link (Upon KYC completion) (TEXT)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [`${link}`],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response;
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const sendFriday1030amMessage = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "⁠⁠paid_user_friday_1030am_3 (FRIDAY 10:30AM - ACCORDING TO PAID RA) (IMAGE)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: ["$sample1", "$sample2"],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const sendDiscount4Message = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "⁠⁠signed_user_2_discount (FRIDAY -1PM TO 10PM UPTO 2 ON OTHER THAN PAID RA PROVIDING DISCOUNT) (IMAGE)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [
+      "$sample1",
+      "$sample2",
+      "$sample3",
+      "$sample4",
+      "$sample5",
+      "$sample6",
+    ],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const sendCampaignMessage = async (phone) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "singup_telegram_link(Just after signup campaign1)[TEXT]",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {},
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    console.log("Response:", response.data);
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
 
 module.exports = router;

@@ -3,6 +3,7 @@ const mongoose = require("mongoose");
 const express = require("express");
 const { Chat } = require("./models/UserSchema");
 const cors = require("cors");
+const axios = require("axios");
 const cron = require("node-cron");
 const { ChatName } = require("./models/ChatNameSchema");
 const ChatMember = require("./models/ChatMemberSchema");
@@ -86,24 +87,32 @@ bot.on("chat_member", async (ctx, next) => {
       inviteLinkRecord.memberId = memberId;
       inviteLinkRecord.status = "used";
 
-      const revokeResponse = await fetch(
-        `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
-        { method: "POST" }
-      );
-      const revokeData = await revokeResponse.json();
-      if (revokeData.ok) {
-        console.log("Invite link revoked after use:", inviteLink);
-        await existingChat.save();
-        console.log("Member joined and recorded:", memberId);
-      } else {
-        console.error(
-          "Failed to revoke invite link after use:",
-          revokeData.description
-        );
+      // Ensure all fields are correctly set before saving
+      if (typeof inviteLinkRecord.durationMonths !== 'number' || !inviteLinkRecord.inviteLink) {
+        console.error("Required fields missing in invite link record");
+        return;
       }
+
+      // const revokeResponse = await fetch(
+      //   `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
+      //   { method: "POST" }
+      // );
+      // const revokeData = await revokeResponse.json();
+      // if (revokeData.ok) {
+      //   console.log("Invite link revoked after use:", inviteLink);
+        await existingChat.save();
+      //   console.log("Member joined and recorded:", memberId);
+      // } else {
+      //   console.error(
+      //     "Failed to revoke invite link after use:",
+      //     revokeData.description
+      //   );
+      // }
     }
   } catch (error) {
     console.error("Error handling new chat member:", error);
+  // } finally {
+  //   return next();
   }
 });
 
@@ -239,12 +248,71 @@ bot.on("channel_post", async (ctx) => {
   }
 });
 
+const sendSunday11amMessage = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "⁠⁠new_signed_user_sunday_11am (sunday 11 AM) (TEXT)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response;
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const fetchUserData = async () => {
+  const url = "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100";
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response.data; // Assuming the data contains an array of users
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+    return [];
+  }
+};
+
+// Schedule the task to run at 11 AM every Sunday
+cron.schedule('0 11 * * 0', async () => {
+  console.log('Running task at 11 AM every Sunday');
+  const users = await fetchUserData();
+  if (users && users.length > 0) {
+    for (const user of users) {
+      await sendSunday11amMessage(user.mobile); // Assuming user data contains phoneNumber field
+    }
+  } else {
+    console.log('No users found.');
+  }
+});
+
 app.use(cors());
 app.use(express.json());
 app.use("/api", require("./routes/Telegram"));
 
-// bot.launch({
-//   allowedUpdates: ["channel_post", "chat_member"],
-// });
+bot.launch({
+  allowedUpdates: ["channel_post", "chat_member"],
+});
 
 app.listen(PORT, () => console.log(`Server is running on Port ${PORT}`));
