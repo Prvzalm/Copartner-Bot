@@ -311,8 +311,8 @@ app.use(cors());
 app.use(express.json());
 app.use("/api", require("./routes/Telegram"));
 
-bot.launch({
-  allowedUpdates: ["channel_post", "chat_member"],
-});
+// bot.launch({
+//   allowedUpdates: ["channel_post", "chat_member"],
+// });
 
 app.listen(PORT, () => console.log(`Server is running on Port ${PORT}`));

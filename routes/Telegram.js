@@ -114,6 +114,30 @@ const sendPostRequest = async (phoneNumber) => {
   }
 };
 
+router.put("/update-member", async (req, res) => {
+  const { inviteLink, memberId } = req.body;
+
+  if (!inviteLink || !memberId) {
+    return res.status(400).json({ message: "inviteLink and memberId are required" });
+  }
+
+  try {
+    const chat = await Chat.findOneAndUpdate(
+      { "inviteLinks.inviteLink": inviteLink },
+      { $set: { "inviteLinks.$.memberId": memberId } },
+      { new: true }
+    );
+
+    if (!chat) {
+      return res.status(404).json({ message: "Invite link not found" });
+    }
+
+    res.status(200).json({ message: "Member ID updated successfully" });
+  } catch (error) {
+    res.status(500).json({ message: "Server error", error });
+  }
+});
+
 router.get("/getLink", async (req, res) => {
   const { inviteLink } = req.body;
   try {
