@@ -101,7 +101,7 @@ bot.on("chat_member", async (ctx, next) => {
       // if (revokeData.ok) {
       //   console.log("Invite link revoked after use:", inviteLink);
         await existingChat.save();
-      //   console.log("Member joined and recorded:", memberId);
+        console.log("Member joined and recorded for:", inviteLink, "with memberId", memberId);
       // } else {
       //   console.error(
       //     "Failed to revoke invite link after use:",
@@ -111,79 +111,79 @@ bot.on("chat_member", async (ctx, next) => {
     }
   } catch (error) {
     console.error("Error handling new chat member:", error);
-  // } finally {
-  //   return next();
+  } finally {
+    return next();
   }
 });
 
-// bot.on("chat_member", async (ctx) => {
-//   const chatName = ctx.chatMember.chat.title;
-//   const chatId = ctx.chatMember.chat.id;
-//   const memberId = ctx.chatMember.new_chat_member.user.id;
-//   const chatLink = ctx.chatMember.invite_link
-//     ? ctx.chatMember.invite_link.invite_link
-//     : "None";
-//   const status = ctx.chatMember.new_chat_member.status;
+bot.on("chat_member", async (ctx) => {
+  const chatName = ctx.chatMember.chat.title;
+  const chatId = ctx.chatMember.chat.id;
+  const memberId = ctx.chatMember.new_chat_member.user.id;
+  const chatLink = ctx.chatMember.invite_link
+    ? ctx.chatMember.invite_link.invite_link
+    : "None";
+  const status = ctx.chatMember.new_chat_member.status;
 
-//   async function addOrUpdate() {
-//     try {
-//       const updateResult = await ChatMember.findOneAndUpdate(
-//         { channelName: chatName }, // Check if memberId doesn't exist
-//         {
-//           $set: { chatId: chatId },
-//           $inc: { joinedMembersCount: 1 },
-//           $push: {
-//             members: {
-//               memberId,
-//               chatLink: chatLink,
-//               joinedAt: new Date(),
-//             },
-//           },
-//         },
-//         { upsert: true, new: true }
-//       );
+  async function addOrUpdate() {
+    try {
+      const updateResult = await ChatMember.findOneAndUpdate(
+        { channelName: chatName }, // Check if memberId doesn't exist
+        {
+          $set: { chatId: chatId },
+          $inc: { joinedMembersCount: 1 },
+          $push: {
+            members: {
+              memberId,
+              chatLink: chatLink,
+              joinedAt: new Date(),
+            },
+          },
+        },
+        { upsert: true, new: true }
+      );
 
-//       if (updateResult) {
-//         console.log(
-//           `Member joined/updated! Channel ID: ${chatName}, Member ID: ${memberId}, Chat Link: ${chatLink}`
-//         );
-//       } else {
-//         console.log(`Member unable to be found/updated in ${chatName}.`);
-//       }
-//     } catch (error) {
-//       console.error("Error updating chat member in MongoDB:", error);
-//     }
-//   }
+      if (updateResult) {
+        console.log(
+          `Member joined/updated! Channel ID: ${chatName}, Member ID: ${memberId}, Chat Link: ${chatLink}`
+        );
+      } else {
+        console.log(`Member unable to be found/updated in ${chatName}.`);
+      }
+    } catch (error) {
+      console.error("Error updating chat member in MongoDB:", error);
+    }
+  }
 
-//   async function memberLeft() {
-//     try {
-//       // Update leftAt for the member in MongoDB
-//       const updateResult = await ChatMember.findOneAndUpdate(
-//         { channelName: chatName, "members.memberId": memberId },
-//         {
-//           $inc: { leftMembersCount: 1 },
-//           $set: { "members.$.leftAt": new Date() },
-//         }
-//       );
+  async function memberLeft() {
+    try {
+      // Update leftAt for the member in MongoDB
+      const updateResult = await ChatMember.findOneAndUpdate(
+        { channelName: chatName, "members.memberId": memberId },
+        {
+          $inc: { leftMembersCount: 1 },
+          $set: { "members.$.leftAt": new Date() },
+        }
+      );
 
-//       if (updateResult) {
-//         console.log(
-//           `Member left! Channel ID: ${chatName}, Member ID: ${memberId}`
-//         );
-//       } else {
-//         console.log("Member not found or not updated.");
-//       }
-//     } catch (error) {
-//       console.error("Error updating leftAt in MongoDB:", error);
-//     }
-//   }
+      if (updateResult) {
+        console.log(
+          `Member left! Channel ID: ${chatName}, Member ID: ${memberId}`
+        );
+      } else {
+        console.log("Member not found or not updated.");
+      }
+    } catch (error) {
+      console.error("Error updating leftAt in MongoDB:", error);
+    }
+  }
 
-//   if (status === "member") {
-//     addOrUpdate();
-//   } else if (status === "kicked" || status === "left" || status === "banned") {
-//     memberLeft();
-//   }
-// });
+  if (status === "member") {
+    addOrUpdate();
+  } else if (status === "kicked" || status === "left" || status === "banned") {
+    memberLeft();
+  }
+});
 
 async function revokeInviteLinkAndBanMember(
   chatId,

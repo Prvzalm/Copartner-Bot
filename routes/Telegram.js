@@ -36,33 +36,71 @@ const createInviteLink = async (
     }
     const inviteLink = data.result.invite_link;
 
-    let expirationDate;
+    // Get current UTC time and convert it to IST
     const now = new Date();
-    const dayOfWeek = now.getDay(); // 0 for Sunday, 1 for Monday, ..., 5 for Friday, 6 for Saturday
-    const currentTime = now.getHours() * 60 + now.getMinutes(); // Current time in minutes
-    const fridayTimeLimit = 15 * 60 + 30; // 3:30 PM in minutes
-    const sundayTimeLimit = 15 * 60 + 30; // 3:30 PM in minutes
+    const istOffset = 5.5 * 60 * 60 * 1000; // IST offset in milliseconds
+    const istNow = new Date(now.getTime() + istOffset);
 
+    const dayOfWeek = istNow.getDay(); // 0 for Sunday, 1 for Monday, ..., 5 for Friday, 6 for Saturday
+
+    // Define the 3:30 PM time limit in IST
+    const timeLimitHours = 15;
+    const timeLimitMinutes = 30;
+    const timeLimit = new Date(
+      istNow.getFullYear(),
+      istNow.getMonth(),
+      istNow.getDate(),
+      timeLimitHours,
+      timeLimitMinutes
+    );
+
+    const currentTime = istNow; // Current IST time
+
+    // Log to verify the 3:30 PM time limit and current IST time
+    console.log("Current IST Time:", currentTime.toString());
+    console.log("3:30 PM IST Time Limit:", timeLimit.toString());
+
+    let additionalDays = 0;
+    if (isDays && isDays !== "false") {
+      switch (dayOfWeek) {
+        case 4: // Thursday
+          additionalDays = currentTime > timeLimit ? 3 : 0;
+          break;
+        case 5: // Friday
+          additionalDays = currentTime > timeLimit ? 3 : 2;
+          break;
+        case 6: // Saturday
+          additionalDays = 2;
+          break;
+        case 0: // Sunday
+          additionalDays = currentTime < timeLimit ? 1 : 0;
+          break;
+        default:
+          additionalDays = 0;
+          break;
+      }
+    }
+
+    // Calculate expiration date based on IST and additionalDays
+    let expirationDate;
     if (!isDays || isDays === "false") {
       expirationDate = new Date(
-        Date.now() + durationMonths * 30 * 24 * 60 * 60 * 1000
+        istNow.getTime() + durationMonths * 30 * 24 * 60 * 60 * 1000
       );
     } else {
-      let additionalDays = 0;
-      if (dayOfWeek === 5 && currentTime > fridayTimeLimit) {
-        additionalDays = 3;
-      } else if (dayOfWeek === 6) {
-        additionalDays = 2;
-      } else if (dayOfWeek === 0 && currentTime < sundayTimeLimit) {
-        additionalDays = 1;
-      }
-
       expirationDate = new Date(
-        Date.now() +
-          (durationMonths * 24 * 60 * 60 * 1000) +
+        istNow.getTime() +
+          durationMonths * 24 * 60 * 60 * 1000 +
           additionalDays * 24 * 60 * 60 * 1000
       );
     }
+
+    console.log(
+      { additionalDays },
+      { expirationDate },
+      { dayOfWeek },
+      { istNow }
+    );
 
     const newChat = await Chat.findOneAndUpdate(
       { chatId },
@@ -118,7 +156,9 @@ router.put("/update-member", async (req, res) => {
   const { inviteLink, memberId } = req.body;
 
   if (!inviteLink || !memberId) {
-    return res.status(400).json({ message: "inviteLink and memberId are required" });
+    return res
+      .status(400)
+      .json({ message: "inviteLink and memberId are required" });
   }
 
   try {
