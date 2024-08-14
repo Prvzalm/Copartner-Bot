@@ -5,8 +5,12 @@ const axios = require("axios");
 const cron = require("node-cron");
 const sha256 = require("sha256");
 const { ChatName } = require("../models/ChatNameSchema");
-const { message } = require("telegraf/filters");
 const router = express.Router();
+const fs = require("fs");
+const Razorpay = require('razorpay');
+const path = require("path");
+const moment = require("moment");
+const crypto = require('crypto');
 require("dotenv").config();
 
 const token = process.env.BOT_TOKEN;
@@ -17,6 +21,11 @@ const SALT_KEY = process.env.SALT_KEY;
 const APP_BE_URL = process.env.APP_BE_URL;
 const key = process.env.FAST2SMS_API_KEY;
 const senderId = process.env.SENDER_ID;
+
+const razorpayInstance = new Razorpay({
+  key_id: 'rzp_test_9lu374ftxzhZBK', // Replace with your Razorpay key ID
+  key_secret: 'TL4S2p3AEFY3mGH5oJf9m8BK' // Replace with your Razorpay secret key
+});
 
 const createInviteLink = async (
   chatId,
@@ -61,7 +70,7 @@ const createInviteLink = async (
     console.log("3:30 PM IST Time Limit:", timeLimit.toString());
 
     let additionalDays = 0;
-    if (isDays && isDays !== "false") {
+    if (isDays && isDays !== "false" && durationMonths === 2) {
       switch (dayOfWeek) {
         case 4: // Thursday
           additionalDays = currentTime > timeLimit ? 3 : 0;
@@ -146,7 +155,6 @@ const sendPostRequest = async (phoneNumber) => {
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
   } catch (error) {
     console.error("Error:", error);
   }
@@ -260,97 +268,60 @@ router.post("/pay", async (req, res) => {
       transactionId,
       mobileNumber,
       transactionDate,
-      isCustom,
+      isCustom
     } = req.body;
-    const data = {
-      merchantId: MERCHANT_ID,
-      merchantTransactionId: transactionId,
-      amount: totalAmount * 100,
-      redirectUrl: `${APP_BE_URL}/api/payment/callback?id=${transactionId}&returnUrl=${encodeURIComponent(
-        returnUrl
-      )}&planType=${plan}&chatId=${chatId}&subscriptionId=${subscriptionId}&userId=${userId}&totalAmount=${totalAmount}&mobileNumber=${mobileNumber}&transactionDate=${transactionDate}&isCustom=${isCustom}`,
-      redirectMode: "POST",
-      merchantUserId: userId,
-      paymentInstrument: {
-        type: "PAY_PAGE",
-      },
-    };
-    console.log("/pay block", data);
-    const bufferObj = Buffer.from(JSON.stringify(data), "utf8");
-    const base64EncodedPayload = bufferObj.toString("base64");
-    const string = base64EncodedPayload + "/pg/v1/pay" + SALT_KEY;
-    const sha256_val = sha256(string);
-    const xVerifyChecksum = sha256_val + "###" + SALT_INDEX;
 
-    const response = await axios.post(
-      `${PHONE_PE_HOST_URL}/pg/v1/pay`,
-      {
-        request: base64EncodedPayload,
-      },
-      {
-        headers: {
-          "Content-Type": "application/json",
-          "X-VERIFY": xVerifyChecksum,
-          accept: "application/json",
-        },
+    const options = {
+      amount: totalAmount * 100, // Convert to paise
+      currency: "INR",
+      receipt: transactionId,
+      payment_capture: '1', // Auto capture after payment
+      notes: {
+        transactionId,
+        returnUrl,
+        planType: plan,
+        chatId,
+        subscriptionId,
+        userId,
+        totalAmount,
+        mobileNumber,
+        transactionDate,
+        isCustom,
       }
-    );
-    console.log(response.data);
-    res.json(response.data);
+    };
+
+    const order = await razorpayInstance.orders.create(options);
+
+    const data = {
+      orderId: order.id,
+      amountInPaise: order.amount,
+      currency: order.currency,
+      method: order.method
+    };
+
+    console.log("/pay block", data);
+    res.json(data);
   } catch (error) {
+    console.error('Error creating Razorpay order:', error);
     res.status(500).send(error.message);
   }
 });
 
-async function checkPayment(req, res) {
-  try {
-    const { transactionId } = req.query;
-
-    console.log("req.query", transactionId);
-
-    if (!transactionId) {
-      throw new Error("Cannot find Merchant Transaction ID");
-    }
-
-    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
-    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}${SALT_KEY}`;
-    const sha256_val = sha256(string).toString();
-    const xVerifyChecksum = `${sha256_val}###${SALT_INDEX}`;
-
-    const options = {
-      method: "GET",
-      url: statusUrl,
-      headers: {
-        accept: "application/json",
-        "Content-Type": "application/json",
-        "X-VERIFY": xVerifyChecksum,
-        "X-MERCHANT-ID": MERCHANT_ID,
-      },
-    };
-
-    const response = await axios.request(options);
-    const data = response.data;
-
-    // Handle the response data according to your business logic
-    // For example, update the payment status in your database
-
-    res.status(200).json({
-      message: "Payment status retrieved successfully",
-      data,
-    });
-  } catch (error) {
-    console.error("Error in /checkpayment:", error.message);
-    res.status(500).json({
-      message: "Internal Server Error",
-      error: error.message,
-    });
-  }
-}
-
 router.post("/payment/callback", async (req, res) => {
   try {
     const {
-      id: transactionId,
+      razorpay_payment_id,
+      razorpay_order_id,
+      razorpay_signature,
+      method
+    } = req.body;
+
+    console.log("req.body", req.body);
+
+    const order = await razorpayInstance.orders.fetch(razorpay_order_id);
+
+    const {
+      transactionId,
       returnUrl,
       planType,
       chatId,
@@ -360,175 +331,78 @@ router.post("/payment/callback", async (req, res) => {
       mobileNumber,
       transactionDate,
       isCustom,
-    } = req.query;
-    console.log(
-      "req.query",
-      transactionId,
-      subscriptionId,
-      userId,
-      totalAmount,
-      mobileNumber
-    );
-    if (!transactionId) {
-      throw new Error(`Cannot find Merchant Transaction ID`);
+    } = order.notes;
+
+    console.log("req.query", order.notes);
+
+    // Verify the payment signature
+    const generated_signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+      .update(razorpay_order_id + "|" + razorpay_payment_id)
+      .digest("hex");
+
+    if (generated_signature !== razorpay_signature) {
+      throw new Error("Invalid Razorpay signature");
     }
-    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
-    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}` + SALT_KEY;
-    const sha256_val = sha256(string);
-    const xVerifyChecksum = sha256_val + "###" + SALT_INDEX;
 
-    const options = {
-      method: "GET",
-      url: statusUrl,
-      headers: {
-        accept: "application/json",
-        "Content-Type": "application/json",
-        "X-VERIFY": xVerifyChecksum,
-        "X-MERCHANT-ID": MERCHANT_ID,
-      },
-    };
+    // Proceed if the payment is successful and verified
+    try {
+      const paymentMode = "Razorpay"; // As Razorpay doesn't specify a mode in the response
 
-    const response = await axios.request(options);
-    const paymentStatus = response.data.data.responseCode;
-    if (response.data.success && paymentStatus === "SUCCESS") {
-      try {
-        const paymentMode = response.data.data.paymentInstrument.type;
-        const result = await createInviteLink(
-          chatId,
-          planType,
-          isCustom,
-          userId,
-          mobileNumber
-        );
-        if (!result.inviteLink) {
-          throw new Error("Failed to create invite link");
-        }
-        const subscriber = await postSubscriberData(
-          transactionId,
-          subscriptionId,
-          userId,
-          totalAmount,
-          paymentMode,
-          transactionDate,
-          result.inviteLink,
-          mobileNumber
-        );
-        if (!subscriber.isSuccess) {
-          throw new Error("Failed to POST subscriber API");
-        }
-
-        const isKYC = await userKYC(userId);
-        if (isKYC) {
-          await sendPaidTelegramLinkMessage(mobileNumber, result.inviteLink);
-          await sendSMS(mobileNumber, result.inviteLink);
-        } else {
-          sendPostRequest(mobileNumber);
-        }
-        console.log(result.inviteLink, chatId);
-
-        await postPaymentResponse({
-          subscriptionId,
-          userId,
-          transactionId,
-          status: "S",
-          amount: totalAmount,
-          paymentMode,
-          transactionDate,
-          remarks: "Payment successful",
-        });
-
-        return res.redirect(
-          `https://copartner.in/kycpage?status=success&transactionId=${transactionId}&inviteLink=${encodeURIComponent(
-            result.inviteLink
-          )}&planType=${planType}&amount=${totalAmount}&subscriptionId=${subscriptionId}`
-        );
-      } catch (error) {
-        console.error("Error while creating invite link:", error);
-        return res.status(500).json({ error: error.message });
+      const result = await createInviteLink(chatId, planType, isCustom, userId, mobileNumber);
+      if (!result.inviteLink) {
+        throw new Error("Failed to create invite link");
       }
-    } else if (response.data.success && paymentStatus === "PENDING") {
-      await postPaymentResponse({
+
+      const subscriber = await postSubscriberData(
+        transactionId,
         subscriptionId,
         userId,
-        transactionId,
-        status: "P",
-        amount: totalAmount,
-        paymentMode: "N/A",
+        totalAmount,
+        paymentMode,
         transactionDate,
-        remarks: "Payment pending",
-      });
-
-      return res.redirect(
-        `${decodeURIComponent(
-          returnUrl
-        )}?status=pending&transactionId=${transactionId}`
+        result.inviteLink,
+        mobileNumber
       );
-    } else {
-      await postPaymentResponse({
-        subscriptionId,
-        userId,
-        transactionId,
-        status: "R",
-        amount: totalAmount,
-        paymentMode: "N/A",
-        transactionDate,
-        remarks: "Payment failed",
-      });
+      if (!subscriber.isSuccess) {
+        throw new Error("Failed to POST subscriber API");
+      }
 
-      return res.redirect(
-        `${decodeURIComponent(
-          returnUrl
-        )}?status=failure&transactionId=${transactionId}`
-      );
+      const subscriberId = subscriber.data.id;
+
+      // const isKYC = await userKYC(userId);
+      // if (isKYC) {
+      //   await sendPaidTelegramLinkMessage(mobileNumber, result.inviteLink);
+      //   await sendSMS(mobileNumber, result.inviteLink);
+      // } else {
+      //   sendPostRequest(mobileNumber);
+      // }
+      console.log(result.inviteLink, chatId);
+
+      // await postPaymentResponse({
+      //   subscriptionId,
+      //   userId,
+      //   transactionId,
+      //   status: "S",
+      //   amount: totalAmount,
+      //   paymentMode,
+      //   transactionDate,
+      //   remarks: "Payment successful",
+      // });
+
+      // Redirect to KYC page after successful payment
+      return res.json({
+        success: true,
+        redirectUrl: `http://localhost:3000/kycpage?status=success&transactionId=${transactionId}&inviteLink=${encodeURIComponent(
+          result.inviteLink
+        )}&planType=${planType}&amount=${totalAmount}&subscriptionId=${subscriptionId}&subscriberId=${subscriberId}`
+      });
+    } catch (error) {
+      console.error("Error while processing payment:", error);
+      return res.status(500).json({ error: error.message });
     }
   } catch (error) {
-    console.error("Error in callback:", error);
+    console.error("Error in payment callback:", error);
     res.status(500).json({ error: error.message });
-  }
-});
-
-router.post("/checkpayment", async (req, res) => {
-  try {
-    const { transactionId } = req.query;
-
-    console.log("req.query", transactionId);
-
-    if (!transactionId) {
-      throw new Error("Cannot find Merchant Transaction ID");
-    }
-
-    const statusUrl = `${PHONE_PE_HOST_URL}/pg/v1/status/${MERCHANT_ID}/${transactionId}`;
-    const string = `/pg/v1/status/${MERCHANT_ID}/${transactionId}${SALT_KEY}`;
-    const sha256_val = sha256(string).toString();
-    const xVerifyChecksum = `${sha256_val}###${SALT_INDEX}`;
-
-    const options = {
-      method: "GET",
-      url: statusUrl,
-      headers: {
-        accept: "application/json",
-        "Content-Type": "application/json",
-        "X-VERIFY": xVerifyChecksum,
-        "X-MERCHANT-ID": MERCHANT_ID,
-      },
-    };
-
-    const response = await axios.request(options);
-    const data = response.data;
-
-    // Handle the response data according to your business logic
-    // For example, update the payment status in your database
-
-    res.status(200).json({
-      message: "Payment status retrieved successfully",
-      data,
-    });
-  } catch (error) {
-    console.error("Error in /payment/callback:", error.message);
-    res.status(500).json({
-      message: "Internal Server Error",
-      error: error.message,
-    });
   }
 });
 
@@ -599,7 +473,7 @@ const postSubscriberData = async (
 
   try {
     const response = await axios.post(
-      "https://copartners.in:5009/api/Subscriber",
+      "https://copartners.in:5009/api/Subscriber/TempSubscription",
       data,
       {
         headers: {
@@ -658,8 +532,11 @@ router.post("/revokeInviteLink", async (req, res) => {
 
 // THESE ARE ALL THE API'S FOR WHATSAPP API
 
+//https://s3.eu-north-1.amazonaws.com/copartners-storage/IMAGES/Joining from copartner-01.jpg
+
 router.get("/sendSignup", async (req, res) => {
-  const { phone, link } = req.query;
+  // const { phone, discount, name, channel, exp, foll, raid } = req.query;
+  const { phone } = req.query;
   try {
     const response = await fetchSubscriptionData();
     res.status(200).json({ success: true, data: response });
@@ -668,36 +545,6 @@ router.get("/sendSignup", async (req, res) => {
     res.status(500).json("Some error in the api");
   }
 });
-
-const sendSignupMessage = async (phoneNumber) => {
-  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
-  const data = {
-    apiKey:
-      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
-    campaignName: "⁠new_signup_1 (On Sign Up) (TEXT)",
-    destination: phoneNumber,
-    userName: "Hailgro tech solutions pvt. ltd.",
-    templateParams: [],
-    source: "new-landing-page form",
-    media: {},
-    buttons: [],
-    carouselCards: [],
-    location: {},
-  };
-
-  try {
-    const response = await axios.post(url, data, {
-      headers: {
-        "Content-Type": "application/json",
-      },
-    });
-    console.log("Response:", response.data);
-    return response;
-  } catch (error) {
-    console.error("Error:", error);
-    throw error;
-  }
-};
 
 const sendTwoHourGapMessage = async (phoneNumber) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
@@ -710,7 +557,7 @@ const sendTwoHourGapMessage = async (phoneNumber) => {
     templateParams: [],
     source: "new-landing-page form",
     media: {
-      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      url: "https://s3.eu-north-1.amazonaws.com/copartners-storage/IMAGES/RA%20Post%203-02%20(1).jpg",
       filename: "sample_media",
     },
     buttons: [],
@@ -724,12 +571,61 @@ const sendTwoHourGapMessage = async (phoneNumber) => {
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
     return response;
   } catch (error) {
     console.error("Error:", error);
   }
 };
+
+const sentUsersPath = path.resolve(__dirname, "sentUsers.json"); // File to store sent user IDs
+
+// Function to read sent user IDs from file
+const getSentUserIds = () => {
+  try {
+    const data = fs.readFileSync(sentUsersPath, "utf8");
+    return new Set(JSON.parse(data));
+  } catch (error) {
+    console.error("Error reading sent users file:", error);
+    return new Set();
+  }
+};
+
+// Function to append a sent user ID to file
+const markUserAsSent = (userId) => {
+  const sentUserIds = Array.from(getSentUserIds());
+  sentUserIds.push(userId);
+  fs.writeFileSync(sentUsersPath, JSON.stringify(sentUserIds), "utf8");
+};
+
+const fetchTwoHourUserData = async () => {
+  console.log("sendTwoHourGapMessage");
+  const url =
+    "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100000";
+  const sentUserIds = getSentUserIds();
+
+  try {
+    const response = await axios.get(url, {
+      headers: { "Content-Type": "application/json" },
+    });
+
+    const targetUsers = response.data.data.filter((user) => {
+      const userCreationTime = moment(user.date);
+      const timeDiff = moment().diff(userCreationTime, "hours", true);
+      return timeDiff >= 1.75 && timeDiff <= 2 && !sentUserIds.has(user.userId);
+    });
+
+    for (let user of targetUsers) {
+      await sendTwoHourGapMessage(user.mobile);
+      markUserAsSent(user.userId);
+    }
+    console.log(`Messages sent to ${targetUsers.length} users.`);
+  } catch (error) {
+    console.error("Error fetching user data:", error);
+  }
+};
+
+// Schedule task to run every 10 minutes
+cron.schedule("*/10 * * * *", fetchTwoHourUserData);
 
 const signedUser2Discount = async (
   discount,
@@ -738,7 +634,8 @@ const signedUser2Discount = async (
   experience,
   followers,
   raid,
-  phoneNumber
+  phoneNumber,
+  raImage
 ) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
   const data = {
@@ -757,7 +654,7 @@ const signedUser2Discount = async (
     ],
     source: "new-landing-page form",
     media: {
-      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      url: raImage,
       filename: "sample_media",
     },
     buttons: [],
@@ -771,7 +668,6 @@ const signedUser2Discount = async (
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
   } catch (error) {
     console.error("Error:", error);
   }
@@ -787,7 +683,7 @@ const fetchSubscriptionData = async () => {
     });
     const subscriptions = response.data.data;
     const filteredSubscriptions = subscriptions
-      .filter((sub) => sub.discountPercentage)
+      .filter((sub) => sub.discountPercentage && !sub.isSpecialSubscription)
       .sort(
         (a, b) => new Date(b.discountValidFrom) - new Date(a.discountValidFrom)
       );
@@ -800,7 +696,7 @@ const fetchSubscriptionData = async () => {
 
 const fetchUserData = async () => {
   const url =
-    "https://copartners.in:5134/api/UserData/UserFirstTimePaymentListing?page=1&pageSize=10000";
+    "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100000";
   try {
     const response = await axios.get(url, {
       headers: {
@@ -814,48 +710,60 @@ const fetchUserData = async () => {
   }
 };
 
-// Schedule the task to run at two times on Friday
-cron.schedule("0 17 * * 5", async () => {
-  console.log("Running task at 5 PM every Friday");
+// Schedule the task to run at two times on Sunday
+// cron.schedule("30 3 * * 0", async () => {
+//   console.log("signedUser2Discount 9 AM Sunday IST");
+//   const subscriptions = await fetchSubscriptionData();
+//   const users = await fetchUserData();
+
+//   if (subscriptions.length > 0 && users.length > 0) {
+//     for (const subscription of subscriptions) {
+//       for (const user of users) {
+//         await signedUser2Discount(
+//           subscription.discountPercentage,
+//           subscription.experts.name,
+//           subscription.experts.channelName,
+//           subscription.experts.experience,
+//           subscription.experts.telegramFollower,
+//           subscription.expertsId,
+//           user.mobile,
+//           subscription.experts.expertImagePath
+//         );
+//       }
+//     }
+//   } else {
+//     console.log("No subscriptions or users found.");
+//   }
+// });
+
+cron.schedule("30 11 * * 0", async () => {
+  console.log("signedUser2Discount 5 PM Sunday IST");
   const subscriptions = await fetchSubscriptionData();
   const users = await fetchUserData();
 
   if (subscriptions.length > 0 && users.length > 0) {
     for (const subscription of subscriptions) {
       for (const user of users) {
-        await signedUser2Discount(
-          subscription.discountPercentage,
-          subscription.experts.name,
-          subscription.experts.channelName,
-          subscription.experts.experience,
-          subscription.experts.telegramFollower,
-          subscription.expertsId,
-          user.mobileNumber
-        );
-      }
-    }
-  } else {
-    console.log("No subscriptions or users found.");
-  }
-});
-
-cron.schedule("0 19 * * 5", async () => {
-  console.log("Running task at 7 PM every Friday");
-  const subscriptions = await fetchSubscriptionData();
-  const users = await fetchUserData();
-
-  if (subscriptions.length > 0 && users.length > 0) {
-    for (const subscription of subscriptions) {
-      for (const user of users) {
-        await signedUser2Discount(
-          subscription.discountPercentage,
-          subscription.experts.name,
-          subscription.experts.channelName,
-          subscription.experts.experience,
-          subscription.experts.telegramFollower,
-          subscription.expertsId,
-          user.mobileNumber
-        );
+        try {
+          console.log(
+            `Processing discount for user: ${user.mobile} and subscription: ${subscription.experts.name}`
+          );
+          await signedUser2Discount(
+            subscription.discountPercentage,
+            subscription.experts.name,
+            subscription.experts.channelName,
+            subscription.experts.experience,
+            subscription.experts.telegramFollower,
+            subscription.expertsId,
+            user.mobile,
+            subscription.experts.expertImagePath
+          );
+        } catch (error) {
+          console.error(
+            `Error processing discount for user: ${user.mobile}`,
+            error
+          );
+        }
       }
     }
   } else {
@@ -868,10 +776,11 @@ const sendPaidTelegramLinkMessage = async (phoneNumber, link) => {
   const data = {
     apiKey:
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
-    campaignName: "⁠⁠paid_telegram_link (Upon KYC completion) (TEXT)",
+    campaignName:
+      "⁠⁠paid_telegram_link (Upon KYC completion) (TEXT)",
     destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
-    templateParams: [`${link}`],
+    templateParams: [link],
     source: "new-landing-page form",
     media: {
       url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
@@ -894,7 +803,7 @@ const sendPaidTelegramLinkMessage = async (phoneNumber, link) => {
   }
 };
 
-const sendFriday1030amMessage = async (phoneNumber) => {
+const sendFriday1030amMessage = async (phoneNumber, userName, raName) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
   const data = {
     apiKey:
@@ -903,7 +812,7 @@ const sendFriday1030amMessage = async (phoneNumber) => {
       "⁠⁠paid_user_friday_1030am_3 (FRIDAY 10:30AM - ACCORDING TO PAID RA) (IMAGE)",
     destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
-    templateParams: ["$sample1", "$sample2"],
+    templateParams: [userName, raName],
     source: "new-landing-page form",
     media: {
       url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
@@ -920,32 +829,80 @@ const sendFriday1030amMessage = async (phoneNumber) => {
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
+    console.log(`Campaign sent to ${phoneNumber}`);
   } catch (error) {
-    console.error("Error:", error);
+    console.error(`Error sending campaign to ${phoneNumber}:`, error);
   }
 };
 
-const sendDiscount4Message = async (phoneNumber) => {
+const fetchRaName = async (raSubscriber) => {
+  const url = `https://copartners.in:5132/api/Experts/${raSubscriber}`;
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response.data.data.name;
+  } catch (error) {
+    console.error(`Error fetching RA name for ${raSubscriber}:`, error);
+    return "";
+  }
+};
+
+const sendCampaignsToEligibleUsers = async () => {
+  const firstTimeUsers = await fetchDynamicUrlUsers(
+    "https://copartners.in:5134/api/UserData/UserFirstTimePaymentListing?page=1&pageSize=100000"
+  );
+  const secondTimeUsers = await fetchDynamicUrlUsers(
+    "https://copartners.in:5134/api/UserData/UserSecondTimePaymentListing?page=1&pageSize=100000"
+  );
+
+  const allUsers = [...firstTimeUsers, ...secondTimeUsers];
+
+  for (const user of allUsers) {
+    if (user.mobile && user.name && user.raSubscriber) {
+      const raName = await fetchRaName(user.raSubscriber);
+      await sendFriday1030amMessage(user.mobile, user.name, raName);
+      // console.log(user.mobile, user.name, raName )
+    }
+  }
+};
+
+cron.schedule("0 14 * * 1", async () => {
+  console.log("Running sendCampaignsToEligibleUsers at Monday 2 PM...");
+  await sendCampaignsToEligibleUsers();
+});
+
+const sendDiscount4Message = async (
+  discount,
+  expertName,
+  channelName,
+  experience,
+  followers,
+  raid,
+  phoneNumber,
+  raImage
+) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
   const data = {
     apiKey:
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
     campaignName:
-      "⁠⁠signed_user_2_discount (FRIDAY -1PM TO 10PM UPTO 2 ON OTHER THAN PAID RA PROVIDING DISCOUNT) (IMAGE)",
+      "signed_user_2_discount (FRIDAY -1PM TO 10PM UPTO 2 ON OTHER THAN PAID RA PROVIDING DISCOUNT) (IMAGE)",
     destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
     templateParams: [
-      "$sample1",
-      "$sample2",
-      "$sample3",
-      "$sample4",
-      "$sample5",
-      "$sample6",
+      `${discount}`,
+      `${expertName}`,
+      `${channelName}`,
+      `${experience}`,
+      `${followers}`,
+      `https://copartner.in/ra-detail/${raid}`,
     ],
     source: "new-landing-page form",
     media: {
-      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/5442184_confidentmansuit.png",
+      url: raImage,
       filename: "sample_media",
     },
     buttons: [],
@@ -959,19 +916,58 @@ const sendDiscount4Message = async (phoneNumber) => {
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
   } catch (error) {
     console.error("Error:", error);
   }
 };
 
-const sendCampaignMessage = async (phone) => {
+const checkAndSendDiscountMessages = async () => {
+  try {
+    const userResponse = await axios.get(
+      "https://copartners.in:5134/api/UserData/UserFirstTimePaymentListing?page=1&pageSize=100000"
+    );
+
+    const subscriptions = await fetchSubscriptionData();
+    const users = userResponse.data.data;
+
+    if (subscriptions.length > 0) {
+      for (const subscription of subscriptions) {
+        if (subscription.discountedAmount && subscription.expertsId) {
+          for (const user of users) {
+            if (user.raSubscriber !== subscription.expertsId) {
+              // Send discount message to the user
+              await sendDiscount4Message(
+                subscription.discountedAmount,
+                subscription.experts.name,
+                subscription.experts.channelName,
+                subscription.experts.experience,
+                subscription.experts.telegramFollower,
+                subscription.expertsId,
+                user.mobile,
+                subscription.experts.expertImagePath
+              );
+            }
+          }
+        }
+      }
+    } else console.log("No Discounts");
+  } catch (error) {
+    console.error("Error fetching data:", error);
+  }
+};
+
+cron.schedule("0 10,17 * * 5", () => {
+  console.log("sendDiscount4Message 10 AM and 5 PM Friday");
+  checkAndSendDiscountMessages();
+});
+
+const sunday11PM = async (phoneNumber) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
   const data = {
     apiKey:
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
-    campaignName: "singup_telegram_link(Just after signup campaign1)[TEXT]",
-    destination: phone,
+    campaignName: "updated⁠⁠new_signed_user_sunday_11am",
+    destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
     templateParams: [],
     source: "new-landing-page form",
@@ -987,10 +983,324 @@ const sendCampaignMessage = async (phone) => {
         "Content-Type": "application/json",
       },
     });
-    console.log("Response:", response.data);
   } catch (error) {
     console.error("Error:", error);
   }
 };
+
+const processUsersForSunday11PM = async () => {
+  const users = await fetchUserData();
+
+  for (const user of users) {
+    await sunday11PM(user.mobile);
+  }
+};
+
+// Schedule the cron job to run every Sunday at 11 AM
+cron.schedule("30 5 * * 0", () => {
+  console.log("WhatsApp campaign sunday11PM 11 AM IST");
+  processUsersForSunday11PM();
+});
+
+const sunday8PM = async (phoneNumber) => {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "updatedsunday8pm_singed_telegram_link[SUNDAY 8 PM](IMAGE)",
+    destination: phoneNumber,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {},
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(url, data, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response;
+  } catch (error) {
+    console.error("Error:", error);
+  }
+};
+
+const processUsersForsunday8PM = async () => {
+  const users = await fetchUserData();
+
+  for (const user of users) {
+    await sunday8PM(user.mobile);
+  }
+};
+
+// Schedule the cron job to run every Sunday at 8 PM
+cron.schedule("0 20 * * 0", () => {
+  console.log("WhatsApp campaign sunday8PM 8 PM");
+  processUsersForsunday8PM();
+});
+
+async function signeduser97Sunday2PM(phone) {
+  const payload = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName: "97signeduser1(IMAGE)( MONDAY 2 PM FOR SIGNED USERS)",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {
+      url: "https://s3.eu-north-1.amazonaws.com/copartners-storage/CAMPAIGN/Offer%20%20post%20-03-01.jpg",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await axios.post(
+      "https://backend.aisensy.com/campaign/t1/api/v2",
+      payload,
+      {
+        headers: {
+          "Content-Type": "application/json",
+        },
+      }
+    );
+  } catch (error) {
+    console.error("Error sending campaign:", error);
+  }
+}
+
+cron.schedule("0 14 * * 0", async () => {
+  console.log("signeduser97Sunday2PM");
+  const users = await fetchUserData();
+  for (const user of users) {
+    await signeduser97Sunday2PM(user.mobile);
+  }
+});
+
+async function after97plan2daysover(phone) {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "after97plan2daysover_1 (TEXT) (AFTER 97 PAID USER PLAN GETS OVER)",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/4958901_highanglekidcheatingschooltestmin.jpg",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error("Error:", error);
+    throw error;
+  }
+}
+
+const fetchDynamicUrlUsers = async (url) => {
+  try {
+    const response = await axios.get(url, {
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+    return response.data.data;
+  } catch (error) {
+    console.error(`Error fetching user data from ${url}:`, error);
+    return [];
+  }
+};
+
+const filterEligibleUsers = (users) => {
+  const now = new Date();
+  return users.filter((user) => {
+    if (!user.isSpecialSubscription) return false;
+    const userDate = new Date(user.date);
+    const timeDifference = now - userDate;
+    const daysDifference = timeDifference / (1000 * 60 * 60 * 24);
+    return daysDifference > 2 && daysDifference < 3;
+  });
+};
+
+// Schedule the task to run daily at 2 PM
+cron.schedule("0 14 * * *", async () => {
+  console.log("after97plan2daysover");
+  const firstTimeUsers = await fetchDynamicUrlUsers(
+    "https://copartners.in:5134/api/UserData/UserFirstTimePaymentListing?page=1&pageSize=1000000"
+  );
+  const secondTimeUsers = await fetchDynamicUrlUsers(
+    "https://copartners.in:5134/api/UserData/UserSecondTimePaymentListing?page=1&pageSize=1000000"
+  );
+
+  const allUsers = [...firstTimeUsers, ...secondTimeUsers];
+  const eligibleUsers = filterEligibleUsers(allUsers);
+
+  for (const user of eligibleUsers) {
+    await after97plan2daysover(user.mobile);
+  }
+});
+
+async function userdiscount97(phone) {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "97userdiscount2(Message to be send after after97plan2daysover_1 )",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [
+      "$sample1",
+      "$sample2",
+      "$sample3",
+      "$sample4",
+      "$sample5",
+      "$sample6",
+    ],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/4958901_highanglekidcheatingschooltestmin.jpg",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error("Error:", error);
+    throw error;
+  }
+}
+
+async function renewal_reminder1(phone) {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "97userdiscount2(Message to be send after after97plan2daysover_1 )",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: [
+      "$sample1",
+      "$sample2",
+      "$sample3",
+      "$sample4",
+      "$sample5",
+      "$sample6",
+    ],
+    source: "new-landing-page form",
+    media: {
+      url: "https://whatsapp-media-library.s3.ap-south-1.amazonaws.com/IMAGE/6353da2e153a147b991dd812/4958901_highanglekidcheatingschooltestmin.jpg",
+      filename: "sample_media",
+    },
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error("Error:", error);
+    throw error;
+  }
+}
+
+async function incomplete_payment(phone) {
+  const url = "https://backend.aisensy.com/campaign/t1/api/v2";
+  const data = {
+    apiKey:
+      "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
+    campaignName:
+      "⁠incomplete_payment (TEXT) (TO BE SENT TO USER WHO TRIED TO PAY AND THE PAYMENT WAS NOT COMPLETED WITHIN 5 MINUTES)",
+    destination: phone,
+    userName: "Hailgro tech solutions pvt. ltd.",
+    templateParams: ["$sample1"],
+    source: "new-landing-page form",
+    media: {},
+    buttons: [],
+    carouselCards: [],
+    location: {},
+  };
+
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const result = await response.json();
+    return result;
+  } catch (error) {
+    console.error("Error:", error);
+    throw error;
+  }
+}
 
 module.exports = router;

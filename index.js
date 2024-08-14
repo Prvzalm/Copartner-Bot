@@ -80,34 +80,22 @@ bot.on("chat_member", async (ctx, next) => {
       return;
     }
 
-    if (new Date() > inviteLinkRecord.expirationDate) {
+    const currentTime = new Date();
+    if (currentTime > inviteLinkRecord.expirationDate) {
       console.log("Expired invite link used:", inviteLink);
-      return;
+      inviteLinkRecord.status = "expired";  // Mark link as expired
     } else {
       inviteLinkRecord.memberId = memberId;
-      inviteLinkRecord.status = "used";
+      inviteLinkRecord.status = "used";  // Only mark as used if it's valid and not expired
 
-      // Ensure all fields are correctly set before saving
-      if (typeof inviteLinkRecord.durationMonths !== 'number' || !inviteLinkRecord.inviteLink) {
+      // Ensure all necessary fields are correctly set before saving
+      if (typeof inviteLinkRecord.durationMonths === 'number' && inviteLinkRecord.inviteLink) {
+        await existingChat.save();
+        console.log("Member joined and recorded for:", inviteLink, "with memberId", memberId);
+      } else {
         console.error("Required fields missing in invite link record");
         return;
       }
-
-      // const revokeResponse = await fetch(
-      //   `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
-      //   { method: "POST" }
-      // );
-      // const revokeData = await revokeResponse.json();
-      // if (revokeData.ok) {
-      //   console.log("Invite link revoked after use:", inviteLink);
-        await existingChat.save();
-        console.log("Member joined and recorded for:", inviteLink, "with memberId", memberId);
-      // } else {
-      //   console.error(
-      //     "Failed to revoke invite link after use:",
-      //     revokeData.description
-      //   );
-      // }
     }
   } catch (error) {
     console.error("Error handling new chat member:", error);
@@ -193,30 +181,34 @@ async function revokeInviteLinkAndBanMember(
   existingChat
 ) {
   try {
-    const revokeResponse = await fetch(
-      `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
-      { method: "POST" }
-    );
-    const revokeData = await revokeResponse.json();
-    if (revokeData.ok) {
-      console.log("Invite link revoked:", inviteLink);
-    } else {
-      throw new Error(
-        `Failed to revoke invite link: ${revokeData.description}`
-      );
-    }
+    const [revokeResponse, banResponse] = await Promise.all([
+      fetch(
+        `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
+        { method: "POST" }
+      ),
+      fetch(
+        `https://api.telegram.org/bot${token}/banChatMember?chat_id=${chatId}&user_id=${memberId}`,
+        { method: "POST" }
+      ),
+    ]);
 
-    const banResponse = await fetch(
-      `https://api.telegram.org/bot${token}/unbanChatMember?chat_id=${chatId}&user_id=${memberId}`,
-      { method: "POST" }
-    );
+    const revokeData = await revokeResponse.json();
     const banData = await banResponse.json();
 
-    if (!banData.ok) {
-      throw new Error(`Failed to remove member: ${banData.description}`);
+    if (revokeData.ok && banData.ok) {
+      console.log("Invite link revoked and member banned:", inviteLink);
+      inviteLinkRecord.status = "removed"; // Mark as removed after successful revocation and ban
+      await existingChat.save();
+    } else {
+      if (!revokeData.ok) {
+        throw new Error(
+          `Failed to revoke invite link: ${revokeData.description}`
+        );
+      }
+      if (!banData.ok) {
+        throw new Error(`Failed to ban member: ${banData.description}`);
+      }
     }
-    inviteLinkRecord.status = "removed";
-    await existingChat.save();
   } catch (error) {
     console.error("Error during revocation and member removal process:", error);
   }
@@ -280,7 +272,8 @@ const sendSunday11amMessage = async (phoneNumber) => {
 };
 
 const fetchUserData = async () => {
-  const url = "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100";
+  const url =
+    "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100";
   try {
     const response = await axios.get(url, {
       headers: {
@@ -295,15 +288,15 @@ const fetchUserData = async () => {
 };
 
 // Schedule the task to run at 11 AM every Sunday
-cron.schedule('0 11 * * 0', async () => {
-  console.log('Running task at 11 AM every Sunday');
+cron.schedule("0 11 * * 0", async () => {
+  console.log("Running task at 11 AM every Sunday");
   const users = await fetchUserData();
   if (users && users.length > 0) {
     for (const user of users) {
       await sendSunday11amMessage(user.mobile); // Assuming user data contains phoneNumber field
     }
   } else {
-    console.log('No users found.');
+    console.log("No users found.");
   }
 });
 
