@@ -187,7 +187,7 @@ async function revokeInviteLinkAndBanMember(
         { method: "POST" }
       ),
       fetch(
-        `https://api.telegram.org/bot${token}/banChatMember?chat_id=${chatId}&user_id=${memberId}`,
+        `https://api.telegram.org/bot${token}/unbanChatMember?chat_id=${chatId}&user_id=${memberId}`,
         { method: "POST" }
       ),
     ]);

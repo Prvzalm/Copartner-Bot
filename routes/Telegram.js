@@ -497,19 +497,58 @@ const postSubscriberData = async (
   }
 };
 
+async function revokeInviteLinkAndBanMember(
+  chatId,
+  memberId,
+  inviteLink,
+  inviteLinkRecord,
+  existingChat
+) {
+  try {
+    const [revokeResponse, banResponse] = await Promise.all([
+      fetch(
+        `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
+        { method: "POST" }
+      ),
+      fetch(
+        `https://api.telegram.org/bot${token}/unbanChatMember?chat_id=${chatId}&user_id=${memberId}`,
+        { method: "POST" }
+      ),
+    ]);
+
+    const revokeData = await revokeResponse.json();
+    const banData = await banResponse.json();
+
+    if (revokeData.ok && banData.ok) {
+      console.log("Invite link revoked and member banned:", inviteLink);
+      // inviteLinkRecord.status = "removed"; // Mark as removed after successful revocation and ban
+      // await existingChat.save();
+    } else {
+      if (!banData.ok) {
+        throw new Error(`Failed to ban member: ${banData.description}`);
+      }
+      if (!revokeData.ok) {
+        throw new Error(
+          `Failed to revoke invite link: ${revokeData.description}`
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error during revocation and member removal process:", error);
+  }
+}
+
 router.post("/revokeInviteLink", async (req, res) => {
-  const { chatId, inviteChatLink } = req.query;
+  const { chatId, inviteChatLink, memberId } = req.query;
 
   try {
-    const response = await fetch(
-      `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteChatLink}`
+    await revokeInviteLinkAndBanMember(
+      chatId, 
+      memberId, 
+      inviteChatLink, 
     );
-    const data = await response.json();
-    if (!data.ok) {
-      throw new Error("Link not revoked");
-    }
-    const inviteLink = data.result.invite_link;
-    res.json({ inviteLink });
+
+    res.json({ message: "Invite link revoked and member banned successfully." });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
