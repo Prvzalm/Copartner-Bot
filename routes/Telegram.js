@@ -11,6 +11,8 @@ const Razorpay = require('razorpay');
 const path = require("path");
 const moment = require("moment");
 const crypto = require('crypto');
+const JoinBot = require("../models/JoinBotSchema");
+const ChatMember = require("../models/ChatMemberSchema");
 require("dotenv").config();
 
 const token = process.env.BOT_TOKEN;
@@ -159,6 +161,81 @@ const sendPostRequest = async (phoneNumber) => {
     console.error("Error:", error);
   }
 };
+
+router.get("/getChannelData", async (req, res) => {
+  try {
+    const channels = await ChatMember.aggregate([
+      {
+        $project: {
+          chatId: 1,
+          channelName: 1,
+          links: { $setUnion: "$members.chatLink" },
+        },
+      },
+    ]);
+
+    res.json(channels);
+  } catch (error) {
+    console.error("Error fetching channel data:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
+
+router.get("/getJoinBotData", async (req, res) => {
+  try {
+    const channels = await JoinBot.aggregate([
+      {
+        $lookup: {
+          from: "chatmembers",
+          localField: "chatId",
+          foreignField: "chatId",
+          as: "chatMembers",
+        },
+      },
+      {
+        $unwind: {
+          path: "$chatMembers",
+          preserveNullAndEmptyArrays: true,
+        },
+      },
+      {
+        $addFields: {
+          telegramLinks: { $ifNull: ["$telegramLinks", []] },
+          linksWithCounts: {
+            $map: {
+              input: "$telegramLinks",
+              as: "link",
+              in: {
+                link: "$$link",
+                membersCount: {
+                  $size: {
+                    $filter: {
+                      input: "$chatMembers.members",
+                      as: "member",
+                      cond: { $eq: ["$$member.chatLink", "$$link"] },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      {
+        $project: {
+          chatId: 1,
+          channelName: 1,
+          linksWithCounts: 1,
+        },
+      },
+    ]);
+
+    res.json(channels);
+  } catch (error) {
+    console.error("Error fetching join bot data:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+});
 
 router.put("/update-member", async (req, res) => {
   const { inviteLink, memberId } = req.body;
