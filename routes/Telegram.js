@@ -13,6 +13,7 @@ const moment = require("moment");
 const crypto = require('crypto');
 const JoinBot = require("../models/JoinBotSchema");
 const ChatMember = require("../models/ChatMemberSchema");
+const { Telegraf } = require("telegraf");
 require("dotenv").config();
 
 const token = process.env.BOT_TOKEN;
@@ -23,6 +24,8 @@ const SALT_KEY = process.env.SALT_KEY;
 const APP_BE_URL = process.env.APP_BE_URL;
 const key = process.env.FAST2SMS_API_KEY;
 const senderId = process.env.SENDER_ID;
+
+const bot = new Telegraf(token);
 
 const razorpayInstance = new Razorpay({
   key_id: 'rzp_test_9lu374ftxzhZBK', // Replace with your Razorpay key ID
@@ -136,6 +139,206 @@ const createInviteLink = async (
     throw error;
   }
 };
+
+const sendCallMessageToGroup = async ({
+  name,
+  method,
+  above,
+  below,
+  target1,
+  target2,
+  target3,
+  target4,
+  stopLoss,
+  chatId,
+}) => {
+  // Build the message dynamically based on provided values
+  let message = `💥 STOCK ALERT 💥\n\n${name} | ${method} - Just a Quick Look 👀\n`;
+
+  // Add optional fields only if they exist
+  if (above) {
+    message += `🤘 Above: ${above}\n`;
+  }
+  if (below) {
+    message += `📉 Below: ${below}\n`;
+  }
+
+  const targets = [target1, target2, target3, target4].filter((t) => t !== undefined && t !== null);
+  if (targets.length > 0) {
+    message += `🎯 Potential Range: ${targets.join(' to ')}\n`;
+  }
+
+  message += `📦 Stop Loss: ${stopLoss}\n\n`;
+  message += `Keep it on your radar – a move could be brewing! 🚀`;
+
+  try {
+    // Send the dynamically generated message
+    await bot.telegram.sendMessage(chatId, message);
+    console.log('Message sent successfully:');
+  } catch (error) {
+    console.error('Error sending message:', error);
+    // Handle the error as needed (e.g., retry logic, notify admin, etc.)
+  }
+};
+
+router.post('/sendCallMessageToGroup', async (req, res) => {
+  const { name, method, above, below, target1, target2, target3, target4, stopLoss, chatId } = req.body;
+
+  if (!name || !method || !stopLoss || !chatId) {
+    return res.status(400).json({ error: 'All parameters are required' });
+  }
+
+  try {
+    await sendCallMessageToGroup({ name, method, above, below, target1, target2, target3, target4, stopLoss, chatId });
+    res.status(200).json({ success: 'Message sent to group' });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+const sendTargetHitMessage = async ({ name, action, above, targetHit, stopLoss, chatId }) => {
+  // Dynamically construct the message
+  const messages = [
+    `🔥 ${name} 🔥
+
+${above ? `Entry: ${above}\n` : ''}🎯 ${targetHit ? `Target Reached: ${targetHit}\n` : ''}
+${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ''}
+
+🚀 Steady climb – Target Locked In! 🚀
+Let’s keep riding the wave, team! 🌊💪`,
+
+
+    `💥 ${name} 💥
+
+${targetHit ? `Target: ⬆️ ${targetHit} Target Achieved 🎯\n` : ''}
+👏 Another target locked – great momentum! 👏
+Stay tuned, this trade’s got legs! 💸`,
+
+
+    `🏆 TARGET HIT ALERT 🏆
+
+${name}${targetHit ? `: Target: ⬆️ ${targetHit}\n` : ''}
+${above ? `Entry: ${above}\n` : ''}${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ''}
+🔥 Solid gains incoming! Ready for the next move? 💪`
+  ];
+
+  const getRandomMessage = (messageArray) => {
+    const randomIndex = Math.floor(Math.random() * messageArray.length);
+    return messageArray[randomIndex];
+  };
+
+  // Select a random message
+  const selectedMessage = getRandomMessage(messages);
+
+  try {
+    // Send the selected message to the specified chatId
+    await bot.telegram.sendMessage(chatId, selectedMessage);
+    console.log('Message sent successfully:');
+  } catch (error) {
+    console.error('Error sending message:', error);
+    // Handle the error as needed (e.g., retry logic, notify admin, etc.)
+  }
+};
+
+router.post('/sendTargetHitMessage', async (req, res) => {
+  const { name, action, chatId, above, targetHit, stopLoss } = req.body;
+
+  // Validate required parameters
+  if (!name || !action || !chatId) {
+    return res.status(400).json({ error: 'Name, action, and chatId are required' });
+  }
+
+  try {
+    await sendTargetHitMessage({ name, action, above, targetHit, stopLoss, chatId });
+    res.status(200).json({ success: 'Message sent to group' });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+const sendSLMessage = async ({name, action, targetStopLoss, stopLoss, chatId}) => {
+  const messages = [
+    `⚠️❌ STOP LOSS ALERT ❌ ⚠️
+
+${name} || ${action}: ${targetStopLoss} ➡️ ${stopLoss}`
+  ]
+
+  try {
+    // Send the selected message to the specified chatId
+    await bot.telegram.sendMessage(chatId, messages[0]);
+    console.log('Message sent successfully:');
+  } catch (error) {
+    console.error('Error sending message:', error);
+    // Handle the error as needed (e.g., retry logic, notify admin, etc.)
+  }
+};
+
+router.post('/sendSLMessage', async (req, res) => {
+  const { name, action, targetStopLoss, stopLoss, chatId } = req.body;
+
+  if (!name || !action || !targetStopLoss || !stopLoss || !chatId) {
+    return res.status(400).json({ error: 'All parameters are required' });
+  }
+
+  try {
+    await sendSLMessage({ name, action, targetStopLoss, stopLoss, chatId });
+    res.status(200).json({ success: 'Message sent to group' });
+  } catch (error) {
+    console.error('Error sending message:', error);
+    res.status(500).json({ error: 'Failed to send message' });
+  }
+});
+
+const sendExitCallMessage = async ({ name, above, stopLoss, targetHit, chatId }) => {
+  // Construct the message dynamically
+  let message = `
+🎉💥 EXIT CALL ALERT 💥🎉 
+
+💥 ${name} 💥
+`;
+
+  if (above) {
+    message += `🔥 Above: ${above}\n`;
+  }
+  if (stopLoss) {
+    message += `💥 Stop Loss: ${stopLoss}\n`;
+  }
+  if (targetHit) {
+    message += `🎯 Target Hit: ${targetHit} 🔥💥\n`;
+  }
+
+  message += `
+💪 Mission accomplished! Celebrate the win! 💪
+Keep up the momentum, traders! 🏆
+`;
+
+  try {
+    // Send the message
+    await bot.telegram.sendMessage(chatId, message);
+    console.log('Exit Call message sent successfully.');
+  } catch (error) {
+    console.error('Error sending Exit Call message:', error);
+    throw error;
+  }
+};
+
+router.post('/sendExitCallMessage', async (req, res) => {
+  const { name, above, stopLoss, targetHit, chatId } = req.body;
+
+  // Validate required parameters
+  if (!name || !chatId) {
+    return res.status(400).json({ error: 'Name and chatId are required.' });
+  }
+
+  try {
+    await sendExitCallMessage({ name, above, stopLoss, targetHit, chatId });
+    res.status(200).json({ success: 'Exit Call message sent to group successfully.' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to send Exit Call message. Please try again later.' });
+  }
+});
 
 const sendPostRequest = async (phoneNumber) => {
   const url = "https://backend.aisensy.com/campaign/t1/api/v2";
@@ -574,22 +777,30 @@ const postSubscriberData = async (
   }
 };
 
-async function revokeInviteLinkAndBanMember(
+const revokeInviteLinkAndBanMember = async (
   chatId,
   memberId,
   inviteLink,
   inviteLinkRecord,
   existingChat
-) {
+) => {
   try {
     const [revokeResponse, banResponse] = await Promise.all([
       fetch(
-        `https://api.telegram.org/bot${token}/revokeChatInviteLink?chat_id=${chatId}&invite_link=${inviteLink}`,
-        { method: "POST" }
+        `https://api.telegram.org/bot${token}/revokeChatInviteLink`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, invite_link: inviteLink }),
+        }
       ),
       fetch(
-        `https://api.telegram.org/bot${token}/unbanChatMember?chat_id=${chatId}&user_id=${memberId}`,
-        { method: "POST" }
+        `https://api.telegram.org/bot${token}/unbanChatMember`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ chat_id: chatId, user_id: memberId }),
+        }
       ),
     ]);
 
@@ -598,8 +809,15 @@ async function revokeInviteLinkAndBanMember(
 
     if (revokeData.ok && banData.ok) {
       console.log("Invite link revoked and member banned:", inviteLink);
-      // inviteLinkRecord.status = "removed"; // Mark as removed after successful revocation and ban
-      // await existingChat.save();
+
+      // Update the invite link status to "removed"
+      inviteLinkRecord.status = "removed";
+
+      // Optionally, update other fields if necessary
+      inviteLinkRecord.expirationDate = new Date();
+
+      // Save the updated Chat document
+      await existingChat.save();
     } else {
       if (!banData.ok) {
         throw new Error(`Failed to ban member: ${banData.description}`);
@@ -612,21 +830,60 @@ async function revokeInviteLinkAndBanMember(
     }
   } catch (error) {
     console.error("Error during revocation and member removal process:", error);
+    throw error;
   }
-}
+};
 
+// API endpoint to revoke invite link and ban member
 router.post("/revokeInviteLink", async (req, res) => {
-  const { chatId, inviteChatLink, memberId } = req.query;
+  const { chatId, inviteChatLink, memberId } = req.body;
+
+  // Validate input
+  if (!chatId || !inviteChatLink || !memberId) {
+    return res.status(400).json({
+      error: "Missing required parameters: chatId, inviteChatLink, memberId",
+    });
+  }
 
   try {
-    await revokeInviteLinkAndBanMember(
-      chatId, 
-      memberId, 
-      inviteChatLink, 
+    // Retrieve the Chat document
+    const existingChat = await Chat.findOne({ chatId });
+
+    if (!existingChat) {
+      return res.status(404).json({ error: "Chat not found." });
+    }
+
+    // Find the specific invite link record
+    const inviteLinkRecord = existingChat.inviteLinks.find(
+      (link) => link.inviteLink === inviteChatLink
     );
 
-    res.json({ message: "Invite link revoked and member banned successfully." });
+    if (!inviteLinkRecord) {
+      return res
+        .status(404)
+        .json({ error: "Invite link not found in the specified chat." });
+    }
+
+    if (inviteLinkRecord.status === "removed") {
+      return res
+        .status(400)
+        .json({ error: "Invite link is already removed." });
+    }
+
+    // Revoke invite link and ban member
+    await revokeInviteLinkAndBanMember(
+      chatId,
+      memberId,
+      inviteChatLink,
+      inviteLinkRecord,
+      existingChat
+    );
+
+    res.json({
+      message: "Invite link revoked and member banned successfully.",
+    });
   } catch (error) {
+    console.error("Error in /revokeInviteLink endpoint:", error);
     res.status(500).json({ error: error.message });
   }
 });
