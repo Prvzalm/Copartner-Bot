@@ -273,7 +273,7 @@ const sendSunday11amMessage = async (phoneNumber) => {
 
 const fetchUserData = async () => {
   const url =
-    "https://copartners.in:5134/api/UserData/UserDataListing?page=1&pageSize=100";
+    "https://apiuat.copartners.in/admin/api/UserData/UserDataListing?page=1&pageSize=100";
   try {
     const response = await axios.get(url, {
       headers: {
