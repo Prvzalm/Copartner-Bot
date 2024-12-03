@@ -839,7 +839,7 @@ router.post("/revokeInviteLink", async (req, res) => {
   const { chatId, inviteChatLink, memberId } = req.body;
 
   // Validate input
-  if (!chatId || !inviteChatLink || !memberId) {
+  if (!chatId || !inviteChatLink) {
     return res.status(400).json({
       error: "Missing required parameters: chatId, inviteChatLink, memberId",
     });
@@ -847,7 +847,7 @@ router.post("/revokeInviteLink", async (req, res) => {
 
   try {
     // Retrieve the Chat document
-    const existingChat = await Chat.findOne({ chatId });
+    const existingChat = await Chat.findOne({ inviteChatLink });
 
     if (!existingChat) {
       return res.status(404).json({ error: "Chat not found." });
