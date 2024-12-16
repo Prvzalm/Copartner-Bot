@@ -7,10 +7,10 @@ const sha256 = require("sha256");
 const { ChatName } = require("../models/ChatNameSchema");
 const router = express.Router();
 const fs = require("fs");
-const Razorpay = require('razorpay');
+const Razorpay = require("razorpay");
 const path = require("path");
 const moment = require("moment");
-const crypto = require('crypto');
+const crypto = require("crypto");
 const JoinBot = require("../models/JoinBotSchema");
 const ChatMember = require("../models/ChatMemberSchema");
 const { Telegraf } = require("telegraf");
@@ -28,8 +28,8 @@ const senderId = process.env.SENDER_ID;
 const bot = new Telegraf(token);
 
 const razorpayInstance = new Razorpay({
-  key_id: 'rzp_test_9lu374ftxzhZBK', // Replace with your Razorpay key ID
-  key_secret: 'TL4S2p3AEFY3mGH5oJf9m8BK' // Replace with your Razorpay secret key
+  key_id: "rzp_test_9lu374ftxzhZBK", // Replace with your Razorpay key ID
+  key_secret: "TL4S2p3AEFY3mGH5oJf9m8BK", // Replace with your Razorpay secret key
 });
 
 const createInviteLink = async (
@@ -140,6 +140,347 @@ const createInviteLink = async (
   }
 };
 
+const getBotToken = (id) => {
+  let botToken;
+  switch (id) {
+    case "264888eb-e470-4526-b6d6-08dc84093bed":
+      botToken = "7711114470:AAH_CCMc46glD6PoCTkrmBDULaRxjJHvTGU";
+      break;
+    case "0f2884df-8a94-448f-c083-08dc86e0e721":
+      botToken = "7632546922:AAHNI5VIn8obEVf-I-RlkambMUens0d18m8";
+      break;
+    case "d723b279-f94e-404d-727d-08dc87a4eb91":
+      botToken = "8007139074:AAElvA3cFgZwpjmRorB4mohZry_g7AUJV2Q";
+      break;
+    case "80768231-836a-4ed2-d4fc-08dc9c271ab8":
+      botToken = "7825390915:AAH4WJocZRzWhPyRz82w8dq1HgNiLqFlFzQ";
+      break;
+    case "a464d17c-f08e-437f-3313-08dce12c92fc":
+      botToken = "7725154343:AAEYS5SxliLqV6o5EhJqrjy1GsnWLujj0vo";
+      break;
+    default:
+      botToken = "7725154343:AAEYS5SxliLqV6o5EhJqrjy1GsnWLujj0vo"; // Default bot token
+      break;
+  }
+  return botToken;
+};
+
+// Common chat ID for the Telegram channel
+const commonChatId = "-1001930548228";
+
+const getTypeOptions = (type) => {
+  switch (type) {
+    case "Commodity":
+      return "1"; // Type 1 for Commodity
+    case "Equity":
+      return "2"; // Type 2 for Equity
+    case "Options":
+      return "3"; // Type 3 for Options
+    default:
+      return "0"; // Default type (optional)
+  }
+};
+
+// Dynamic Call Alert Message
+const telegramMessageCopartner = async ({
+  id,
+  name,
+  method,
+  above,
+  below,
+  target1,
+  target2,
+  target3,
+  target4,
+  stopLoss,
+  type,
+  headerTemplate,
+  footerTemplate,
+}) => {
+  const token = getBotToken(id);
+
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  let message = `${
+    headerTemplate || `💥 STOCK ALERT 💥`
+  }\n\n${name} | ${method}\n`;
+  if (above) {
+    message += `⬆️ Above: ${above}\n`;
+  }
+  if (below) {
+    message += `⬇️ Below: ${below}\n`;
+  }
+  const targets = [target1, target2, target3, target4].filter(
+    (t) => t !== undefined && t !== null
+  );
+  if (targets.length > 0) {
+    message += `🎯 Target Hit: ${targets.join(" to ")}\n`;
+  }
+  message += `❎ Stop Loss: ${stopLoss}\n\n`;
+  message += footerTemplate || `Keep it on your radar`;
+
+  const inlineKeyboard = {
+    inline_keyboard: [
+      [
+        {
+          text: "👉 Buy Premium 👈",
+          url: `https://copartner.in/ra-detail/${id}?type=${type}&referralCode=TEL021&apid=f47658b5-2d76-4a6d-b675-08dd19e263cf&apurl=TELE1`,
+        },
+        {
+          text: "🚀 Get App 🚀",
+          url: `https://copartner.onelink.me/Ik5L/q1xo9tpo`,
+        },
+      ],
+    ],
+  };
+
+  try {
+    await axios.post(url, {
+      chat_id: commonChatId,
+      text: message,
+      parse_mode: "Markdown",
+      reply_markup: JSON.stringify(inlineKeyboard),
+    });
+    console.log("Call Alert Message sent successfully");
+  } catch (error) {
+    console.error("Error sending Call Alert message:", error.message);
+  }
+};
+
+// Target Hit Message
+const telegramHitCopartner = async ({
+  id,
+  name,
+  above,
+  targetHit,
+  stopLoss,
+  previousAbove,
+  previousTargetHit,
+  previousStopLoss,
+  headerTemplate,
+  footerTemplate,
+}) => {
+  const token = getBotToken(id);
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  // Determine alert type
+  let alertType = `💥 STOCK ALERT 💥`;
+
+  if (targetHit !== previousTargetHit) {
+    alertType = "🔥✅🥳 Target Hit Alert! 🥳✅🔥";
+  } else if (stopLoss !== previousStopLoss) {
+    alertType = "❎ STOP LOSS UPDATE ❎";
+  } else if (above !== previousAbove) {
+    alertType = "📣Action Change Alert📣";
+  }
+
+  // Construct the message
+  let message = `${headerTemplate || alertType}\n\n${name}\n`;
+
+  if (above !== previousAbove) {
+    message += `🤘 Action: ${above}\n`;
+  }
+  if (targetHit !== previousTargetHit) {
+    message += `🎯 Target Hit: ${targetHit}\n`;
+  }
+  if (stopLoss !== previousStopLoss) {
+    message += `❎ Stop Loss: ${stopLoss}\n`;
+  }
+
+  message += `\n${footerTemplate || ""}`;
+
+  try {
+    await axios.post(url, {
+      chat_id: commonChatId,
+      text: message,
+      parse_mode: "Markdown",
+    });
+    console.log("Target Hit Message sent successfully");
+  } catch (error) {
+    console.error("Error sending Target Hit message:", error.message);
+  }
+};
+
+// Exit Call Message
+const telegramExitCopartner = async ({
+  id,
+  name,
+  above,
+  stopLoss,
+  targetHit,
+  callPostId,
+  headerTemplate,
+  footerTemplate,
+}) => {
+  const token = getBotToken(id);
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  let message = `${headerTemplate || `🛑 EXIT CALL ALERT 🛑`}\n\n`;
+  message += `${name}\n`;
+
+  const allTargets = [
+    callPostId.target1,
+    callPostId.target2,
+    callPostId.target3,
+    callPostId.target4,
+  ];
+
+  // Convert targetHit to a number for consistent comparison
+  const targetHitValue = Number(callPostId.targetHit);
+
+  // Find index of the targetHit value
+  const targetHitIndex = allTargets.findIndex(
+    (target) => Number(target) === targetHitValue // Ensure type consistency
+  );
+
+  // Get only the targets up to and including the targetHit
+  const visibleTargets = allTargets
+    .slice(0, targetHitIndex + 1) // Slice up to targetHit index
+    .filter(Boolean) // Filter out falsy values
+    .join(", ");
+
+  if (callPostId.targetHit) {
+    if (visibleTargets) {
+      message += `🎯 Targets: ${visibleTargets}\n`;
+    }
+  }
+  message += `\n${
+    footerTemplate ||
+    (callPostId.targetHit &&
+      "💪 Mission accomplished! Celebrate the win! 💪\nKeep up the momentum, traders! 🏆")
+  }
+`;
+
+  try {
+    await axios.post(url, {
+      chat_id: commonChatId,
+      text: message,
+      parse_mode: "Markdown",
+    });
+    console.log("Exit Call Message sent successfully");
+  } catch (error) {
+    console.error("Error sending Exit Call message:", error.message);
+  }
+};
+
+// Router Endpoints
+router.post("/telegramMessageCopartner", async (req, res) => {
+  const {
+    id,
+    name,
+    method,
+    above,
+    below,
+    target1,
+    target2,
+    target3,
+    target4,
+    stopLoss,
+    type,
+    headerTemplate,
+    footerTemplate,
+  } = req.body;
+  if (!id || !name || !method || !stopLoss) {
+    return res.status(400).json({ error: "All parameters are required" });
+  }
+  try {
+    await telegramMessageCopartner({
+      id,
+      name,
+      method,
+      above,
+      below,
+      target1,
+      target2,
+      target3,
+      target4,
+      stopLoss,
+      type,
+      headerTemplate,
+      footerTemplate,
+    });
+    res.status(200).json({ success: "Call Alert Message sent successfully" });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Failed to send Call Alert Message" });
+  }
+});
+
+router.post("/telegramHitCopartner", async (req, res) => {
+  const {
+    id,
+    name,
+    above,
+    targetHit,
+    stopLoss,
+    previousAbove,
+    previousTargetHit,
+    previousStopLoss,
+    headerTemplate,
+    footerTemplate,
+  } = req.body;
+
+  // Validate required fields
+  if (!id || !name || !targetHit) {
+    return res
+      .status(400)
+      .json({ error: "ID, Name, and Target Hit are required" });
+  }
+
+  try {
+    // Call the telegramHitCopartner function with the additional parameters
+    await telegramHitCopartner({
+      id,
+      name,
+      above,
+      targetHit,
+      stopLoss,
+      previousAbove,
+      previousTargetHit,
+      previousStopLoss,
+      headerTemplate,
+      footerTemplate,
+    });
+
+    res.status(200).json({ success: "Target Hit Message sent successfully" });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Failed to send Target Hit Message" });
+  }
+});
+
+router.post("/telegramExitCopartner", async (req, res) => {
+  const {
+    id,
+    name,
+    above,
+    stopLoss,
+    targetHit,
+    callPostId,
+    headerTemplate,
+    footerTemplate,
+  } = req.body;
+  if (!id || !name) {
+    return res.status(400).json({ error: "ID and Name are required" });
+  }
+  try {
+    await telegramExitCopartner({
+      id,
+      name,
+      above,
+      stopLoss,
+      targetHit,
+      callPostId,
+      headerTemplate,
+      footerTemplate,
+    });
+    res.status(200).json({ success: "Exit Call Message sent successfully" });
+  } catch (error) {
+    console.error("Error:", error);
+    res.status(500).json({ error: "Failed to send Exit Call Message" });
+  }
+});
+
 const sendCallMessageToGroup = async ({
   name,
   method,
@@ -153,74 +494,107 @@ const sendCallMessageToGroup = async ({
   chatId,
 }) => {
   // Build the message dynamically based on provided values
-  let message = `💥 STOCK ALERT 💥\n\n${name} | ${method} - Just a Quick Look 👀\n`;
+  let message = `💥 STOCK ALERT 💥\n\n${name} | ${method}\n`;
 
   // Add optional fields only if they exist
   if (above) {
-    message += `🤘 Above: ${above}\n`;
+    message += `⬆️ Above: ${above}\n`;
   }
   if (below) {
-    message += `📉 Below: ${below}\n`;
+    message += `⬇️ Below: ${below}\n`;
   }
 
-  const targets = [target1, target2, target3, target4].filter((t) => t !== undefined && t !== null);
+  const targets = [target1, target2, target3, target4].filter(
+    (t) => t !== undefined && t !== null
+  );
   if (targets.length > 0) {
-    message += `🎯 Potential Range: ${targets.join(' to ')}\n`;
+    message += `🎯 Target Hit: ${targets.join(" to ")}\n`;
   }
 
-  message += `📦 Stop Loss: ${stopLoss}\n\n`;
-  message += `Keep it on your radar – a move could be brewing! 🚀`;
+  message += `❎ Stop Loss: ${stopLoss}\n\n`;
+  message += `Keep it on your radar`;
 
   try {
     // Send the dynamically generated message
     await bot.telegram.sendMessage(chatId, message);
-    console.log('Message sent successfully:');
+    console.log("Message sent successfully:");
   } catch (error) {
-    console.error('Error sending message:', error);
+    console.error("Error sending message:", error);
     // Handle the error as needed (e.g., retry logic, notify admin, etc.)
   }
 };
 
-router.post('/sendCallMessageToGroup', async (req, res) => {
-  const { name, method, above, below, target1, target2, target3, target4, stopLoss, chatId } = req.body;
+router.post("/sendCallMessageToGroup", async (req, res) => {
+  const {
+    name,
+    method,
+    above,
+    below,
+    target1,
+    target2,
+    target3,
+    target4,
+    stopLoss,
+    chatId,
+  } = req.body;
 
   if (!name || !method || !stopLoss || !chatId) {
-    return res.status(400).json({ error: 'All parameters are required' });
+    return res.status(400).json({ error: "All parameters are required" });
   }
 
   try {
-    await sendCallMessageToGroup({ name, method, above, below, target1, target2, target3, target4, stopLoss, chatId });
-    res.status(200).json({ success: 'Message sent to group' });
+    await sendCallMessageToGroup({
+      name,
+      method,
+      above,
+      below,
+      target1,
+      target2,
+      target3,
+      target4,
+      stopLoss,
+      chatId,
+    });
+    res.status(200).json({ success: "Message sent to group" });
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error("Error sending message:", error);
+    res.status(500).json({ error: "Failed to send message" });
   }
 });
 
-const sendTargetHitMessage = async ({ name, action, above, targetHit, stopLoss, chatId }) => {
+const sendTargetHitMessage = async ({
+  name,
+  action,
+  above,
+  targetHit,
+  stopLoss,
+  chatId,
+}) => {
   // Dynamically construct the message
   const messages = [
     `🔥 ${name} 🔥
 
-${above ? `Entry: ${above}\n` : ''}🎯 ${targetHit ? `Target Reached: ${targetHit}\n` : ''}
-${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ''}
+${above ? `Entry: ${above}\n` : ""}🎯 ${
+      targetHit ? `Target Reached: ${targetHit}\n` : ""
+    }
+${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ""}
 
 🚀 Steady climb – Target Locked In! 🚀
 Let’s keep riding the wave, team! 🌊💪`,
 
-
     `💥 ${name} 💥
 
-${targetHit ? `Target: ⬆️ ${targetHit} Target Achieved 🎯\n` : ''}
+${targetHit ? `Target: ⬆️ ${targetHit} Target Achieved 🎯\n` : ""}
 👏 Another target locked – great momentum! 👏
 Stay tuned, this trade’s got legs! 💸`,
 
-
     `🏆 TARGET HIT ALERT 🏆
 
-${name}${targetHit ? `: Target: ⬆️ ${targetHit}\n` : ''}
-${above ? `Entry: ${above}\n` : ''}${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ''}
-🔥 Solid gains incoming! Ready for the next move? 💪`
+${name}${targetHit ? `: Target: ⬆️ ${targetHit}\n` : ""}
+${above ? `Entry: ${above}\n` : ""}${
+      stopLoss ? `📦 Stop Loss: ${stopLoss}\n` : ""
+    }
+🔥 Solid gains incoming! Ready for the next move? 💪`,
   ];
 
   const getRandomMessage = (messageArray) => {
@@ -234,64 +608,85 @@ ${above ? `Entry: ${above}\n` : ''}${stopLoss ? `📦 Stop Loss: ${stopLoss}\n` 
   try {
     // Send the selected message to the specified chatId
     await bot.telegram.sendMessage(chatId, selectedMessage);
-    console.log('Message sent successfully:');
+    console.log("Message sent successfully:");
   } catch (error) {
-    console.error('Error sending message:', error);
+    console.error("Error sending message:", error);
     // Handle the error as needed (e.g., retry logic, notify admin, etc.)
   }
 };
 
-router.post('/sendTargetHitMessage', async (req, res) => {
+router.post("/sendTargetHitMessage", async (req, res) => {
   const { name, action, chatId, above, targetHit, stopLoss } = req.body;
 
   // Validate required parameters
   if (!name || !action || !chatId) {
-    return res.status(400).json({ error: 'Name, action, and chatId are required' });
+    return res
+      .status(400)
+      .json({ error: "Name, action, and chatId are required" });
   }
 
   try {
-    await sendTargetHitMessage({ name, action, above, targetHit, stopLoss, chatId });
-    res.status(200).json({ success: 'Message sent to group' });
+    await sendTargetHitMessage({
+      name,
+      action,
+      above,
+      targetHit,
+      stopLoss,
+      chatId,
+    });
+    res.status(200).json({ success: "Message sent to group" });
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error("Error sending message:", error);
+    res.status(500).json({ error: "Failed to send message" });
   }
 });
 
-const sendSLMessage = async ({name, action, targetStopLoss, stopLoss, chatId}) => {
+const sendSLMessage = async ({
+  name,
+  action,
+  targetStopLoss,
+  stopLoss,
+  chatId,
+}) => {
   const messages = [
     `⚠️❌ STOP LOSS ALERT ❌ ⚠️
 
-${name} || ${action}: ${targetStopLoss} ➡️ ${stopLoss}`
-  ]
+${name} || ${action}: ${targetStopLoss} ➡️ ${stopLoss}`,
+  ];
 
   try {
     // Send the selected message to the specified chatId
     await bot.telegram.sendMessage(chatId, messages[0]);
-    console.log('Message sent successfully:');
+    console.log("Message sent successfully:");
   } catch (error) {
-    console.error('Error sending message:', error);
+    console.error("Error sending message:", error);
     // Handle the error as needed (e.g., retry logic, notify admin, etc.)
   }
 };
 
-router.post('/sendSLMessage', async (req, res) => {
+router.post("/sendSLMessage", async (req, res) => {
   const { name, action, targetStopLoss, stopLoss, chatId } = req.body;
 
   if (!name || !action || !targetStopLoss || !stopLoss || !chatId) {
-    return res.status(400).json({ error: 'All parameters are required' });
+    return res.status(400).json({ error: "All parameters are required" });
   }
 
   try {
     await sendSLMessage({ name, action, targetStopLoss, stopLoss, chatId });
-    res.status(200).json({ success: 'Message sent to group' });
+    res.status(200).json({ success: "Message sent to group" });
   } catch (error) {
-    console.error('Error sending message:', error);
-    res.status(500).json({ error: 'Failed to send message' });
+    console.error("Error sending message:", error);
+    res.status(500).json({ error: "Failed to send message" });
   }
 });
 
-const sendExitCallMessage = async ({ name, above, stopLoss, targetHit, chatId }) => {
+const sendExitCallMessage = async ({
+  name,
+  above,
+  stopLoss,
+  targetHit,
+  chatId,
+}) => {
   // Construct the message dynamically
   let message = `
 🎉💥 EXIT CALL ALERT 💥🎉 
@@ -300,10 +695,10 @@ const sendExitCallMessage = async ({ name, above, stopLoss, targetHit, chatId })
 `;
 
   if (above) {
-    message += `🔥 Above: ${above}\n`;
+    message += `⬆️ Above: ${above}\n`;
   }
   if (stopLoss) {
-    message += `💥 Stop Loss: ${stopLoss}\n`;
+    message += `❎ Stop Loss: ${stopLoss}\n`;
   }
   if (targetHit) {
     message += `🎯 Target Hit: ${targetHit} 🔥💥\n`;
@@ -317,26 +712,30 @@ Keep up the momentum, traders! 🏆
   try {
     // Send the message
     await bot.telegram.sendMessage(chatId, message);
-    console.log('Exit Call message sent successfully.');
+    console.log("Exit Call message sent successfully.");
   } catch (error) {
-    console.error('Error sending Exit Call message:', error);
+    console.error("Error sending Exit Call message:", error);
     throw error;
   }
 };
 
-router.post('/sendExitCallMessage', async (req, res) => {
+router.post("/sendExitCallMessage", async (req, res) => {
   const { name, above, stopLoss, targetHit, chatId } = req.body;
 
   // Validate required parameters
   if (!name || !chatId) {
-    return res.status(400).json({ error: 'Name and chatId are required.' });
+    return res.status(400).json({ error: "Name and chatId are required." });
   }
 
   try {
     await sendExitCallMessage({ name, above, stopLoss, targetHit, chatId });
-    res.status(200).json({ success: 'Exit Call message sent to group successfully.' });
+    res
+      .status(200)
+      .json({ success: "Exit Call message sent to group successfully." });
   } catch (error) {
-    res.status(500).json({ error: 'Failed to send Exit Call message. Please try again later.' });
+    res.status(500).json({
+      error: "Failed to send Exit Call message. Please try again later.",
+    });
   }
 });
 
@@ -548,14 +947,14 @@ router.post("/pay", async (req, res) => {
       transactionId,
       mobileNumber,
       transactionDate,
-      isCustom
+      isCustom,
     } = req.body;
 
     const options = {
       amount: totalAmount * 100, // Convert to paise
       currency: "INR",
       receipt: transactionId,
-      payment_capture: '1', // Auto capture after payment
+      payment_capture: "1", // Auto capture after payment
       notes: {
         transactionId,
         returnUrl,
@@ -567,7 +966,7 @@ router.post("/pay", async (req, res) => {
         mobileNumber,
         transactionDate,
         isCustom,
-      }
+      },
     };
 
     const order = await razorpayInstance.orders.create(options);
@@ -576,13 +975,13 @@ router.post("/pay", async (req, res) => {
       orderId: order.id,
       amountInPaise: order.amount,
       currency: order.currency,
-      method: order.method
+      method: order.method,
     };
 
     console.log("/pay block", data);
     res.json(data);
   } catch (error) {
-    console.error('Error creating Razorpay order:', error);
+    console.error("Error creating Razorpay order:", error);
     res.status(500).send(error.message);
   }
 });
@@ -593,7 +992,7 @@ router.post("/payment/callback", async (req, res) => {
       razorpay_payment_id,
       razorpay_order_id,
       razorpay_signature,
-      method
+      method,
     } = req.body;
 
     console.log("req.body", req.body);
@@ -616,7 +1015,8 @@ router.post("/payment/callback", async (req, res) => {
     console.log("req.query", order.notes);
 
     // Verify the payment signature
-    const generated_signature = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
+    const generated_signature = crypto
+      .createHmac("sha256", process.env.RAZORPAY_KEY_SECRET)
       .update(razorpay_order_id + "|" + razorpay_payment_id)
       .digest("hex");
 
@@ -628,7 +1028,13 @@ router.post("/payment/callback", async (req, res) => {
     try {
       const paymentMode = "Razorpay"; // As Razorpay doesn't specify a mode in the response
 
-      const result = await createInviteLink(chatId, planType, isCustom, userId, mobileNumber);
+      const result = await createInviteLink(
+        chatId,
+        planType,
+        isCustom,
+        userId,
+        mobileNumber
+      );
       if (!result.inviteLink) {
         throw new Error("Failed to create invite link");
       }
@@ -674,7 +1080,7 @@ router.post("/payment/callback", async (req, res) => {
         success: true,
         redirectUrl: `http://localhost:3000/kycpage?status=success&transactionId=${transactionId}&inviteLink=${encodeURIComponent(
           result.inviteLink
-        )}&planType=${planType}&amount=${totalAmount}&subscriptionId=${subscriptionId}&subscriberId=${subscriberId}`
+        )}&planType=${planType}&amount=${totalAmount}&subscriptionId=${subscriptionId}&subscriberId=${subscriberId}`,
       });
     } catch (error) {
       console.error("Error while processing payment:", error);
@@ -786,22 +1192,16 @@ const revokeInviteLinkAndBanMember = async (
 ) => {
   try {
     const [revokeResponse, banResponse] = await Promise.all([
-      fetch(
-        `https://api.telegram.org/bot${token}/revokeChatInviteLink`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, invite_link: inviteLink }),
-        }
-      ),
-      fetch(
-        `https://api.telegram.org/bot${token}/unbanChatMember`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ chat_id: chatId, user_id: memberId }),
-        }
-      ),
+      fetch(`https://api.telegram.org/bot${token}/revokeChatInviteLink`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, invite_link: inviteLink }),
+      }),
+      fetch(`https://api.telegram.org/bot${token}/unbanChatMember`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, user_id: memberId }),
+      }),
     ]);
 
     const revokeData = await revokeResponse.json();
@@ -865,9 +1265,7 @@ router.post("/revokeInviteLink", async (req, res) => {
     }
 
     if (inviteLinkRecord.status === "removed") {
-      return res
-        .status(400)
-        .json({ error: "Invite link is already removed." });
+      return res.status(400).json({ error: "Invite link is already removed." });
     }
 
     // Revoke invite link and ban member
@@ -1149,8 +1547,7 @@ const sendPaidTelegramLinkMessage = async (phoneNumber, link) => {
   const data = {
     apiKey:
       "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpZCI6IjY2MmM5ZWNiOTNhMmJkMGFlZTVlMGZiMiIsIm5hbWUiOiJIYWlsZ3JvIHRlY2ggc29sdXRpb25zIHB2dC4gbHRkLiIsImFwcE5hbWUiOiJBaVNlbnN5IiwiY2xpZW50SWQiOiI2NjJjOWVjYjkzYTJiZDBhZWU1ZTBmYWIiLCJhY3RpdmVQbGFuIjoiQkFTSUNfTU9OVEhMWSIsImlhdCI6MTcxNDIwMDI2N30.fQE69zoffweW2Z4_pMiXynoJjextT5jLrhXp6Bh1FgQ",
-    campaignName:
-      "⁠⁠paid_telegram_link (Upon KYC completion) (TEXT)",
+    campaignName: "⁠⁠paid_telegram_link (Upon KYC completion) (TEXT)",
     destination: phoneNumber,
     userName: "Hailgro tech solutions pvt. ltd.",
     templateParams: [link],
